@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.onVisibilityChange = { [weak self] visible in self?.model.isVisible = visible }
         model.onBeforeAdminPrompt = { [weak self] in self?.panel.close() }
         model.onTitleChange = { [weak self] in self?.updateTitle() }
+        model.updates.onChange = { [weak self] in self?.model.objectWillChange.send() }
 
         // Save the partial minute of history when quit or killed (e.g. `pkill` from build.sh).
         signal(SIGTERM, SIG_IGN)

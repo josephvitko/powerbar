@@ -59,6 +59,7 @@ final class PanelModel: ObservableObject {
     private var systemLive = PowerHistory(span: 10 * 60)       // the Mac's own power, on battery or AC
     private var accessoryLive = PowerHistory(span: 10 * 60)    // power sent to USB-C devices
     let appHistory = AppHistory()
+    let updates = UpdateCheck()
     private(set) var lowPower: LowPowerMode?
     let history = HistoryStore()
     let alerts = DrainAlerts()
@@ -77,6 +78,7 @@ final class PanelModel: ObservableObject {
     }
 
     func tick() {
+        updates.checkIfDue()
         soc.sample()
         if let delta = energy.sample(gpuWatts: soc.latest?.gpu) {
             appHistory.add(seconds: delta.seconds, apps: delta.apps)
@@ -252,11 +254,14 @@ final class PanelModel: ObservableObject {
 
     func setLowPower(_ mode: LowPowerMode) {
         onBeforeAdminPrompt?()
-        // Let the menu finish closing before the password prompt appears.
-        DispatchQueue.main.async {
+        // Off the main thread: the password prompt blocks until answered.
+        DispatchQueue.global(qos: .userInitiated).async {
             mode.apply()
-            self.lowPower = LowPowerMode.current()
-            self.onTitleChange?()
+            let current = LowPowerMode.current()
+            DispatchQueue.main.async {
+                self.lowPower = current
+                self.onTitleChange?()
+            }
         }
     }
 }

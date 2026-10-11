@@ -53,10 +53,14 @@ enum LowPowerMode: CaseIterable {
         case .always: (1, 1)
         }
         let cmd = "/usr/bin/pmset -b lowpowermode \(battery) && /usr/bin/pmset -c lowpowermode \(ac)"
-        let script = NSAppleScript(source: "do shell script \"\(cmd)\" with administrator privileges "
-            + "with prompt \"PowerBar wants to change Low Power Mode.\"")
-        var error: NSDictionary?
-        script?.executeAndReturnError(&error)
-        return error == nil
+        // Run via osascript (a separate, Apple-signed process) for the standard admin prompt;
+        // this works the same under the hardened runtime as in a dev build.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", "do shell script \"\(cmd)\" with administrator privileges "
+                          + "with prompt \"PowerBar wants to change Low Power Mode.\""]
+        guard (try? task.run()) != nil else { return false }
+        task.waitUntilExit()
+        return task.terminationStatus == 0
     }
 }

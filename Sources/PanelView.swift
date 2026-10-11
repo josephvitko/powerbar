@@ -380,12 +380,23 @@ struct PanelView: View {
             Toggle("Show Wh in Menu Bar", isOn: $model.showWh)
             Toggle("Launch at Login", isOn: $model.launchAtLogin)
             Divider()
+            if let update = model.updates.available {
+                Button("Update Available: \(update.version)…") { NSWorkspace.shared.open(update.url) }
+            }
+            Button("About PowerBar \(UpdateCheck.currentVersion)") {
+                NSWorkspace.shared.open(URL(string: "https://github.com/josephvitko/powerbar")!)
+            }
             Button("Open Activity Monitor") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
             }
             Button("Quit PowerBar") { NSApp.terminate(nil) }
         } label: {
             Image(systemName: "gearshape")
+                .overlay(alignment: .topTrailing) {
+                    if model.updates.available != nil {
+                        Circle().fill(Color.accentColor).frame(width: 6, height: 6).offset(x: 2, y: -2)
+                    }
+                }
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

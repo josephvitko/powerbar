@@ -1,3 +1,5 @@
+<p align="center"><img src="Resources/AppIcon-preview.png" width="128" alt=""></p>
+
 # PowerBar
 
 A minimal macOS menu bar app that shows how much power your MacBook is drawing, live.
@@ -27,15 +29,25 @@ It runs with no dependencies or root access, and uses ~0% CPU and ~25 MB of RAM.
 
 ## Install
 
-Requires macOS 13+ and the Xcode Command Line Tools (`xcode-select --install`).
+Requires an Apple Silicon Mac on macOS 13 or later.
+
+**Homebrew**
+
+```sh
+brew install --cask josephvitko/tap/powerbar
+```
+
+**Download** — grab `PowerBar-<version>.zip` from [Releases](https://github.com/josephvitko/powerbar/releases), unzip, and move `PowerBar.app` to Applications. Releases are signed and notarized by Apple.
+
+**Build from source** — needs the Xcode Command Line Tools (`xcode-select --install`):
 
 ```sh
 git clone https://github.com/josephvitko/powerbar.git
 cd powerbar
-./build.sh
+./build.sh   # builds, installs to ~/Applications, and launches
 ```
 
-`build.sh` compiles the app, ad-hoc signs it, installs it to `~/Applications/PowerBar.app`, and launches it. Turn on **Launch at Login** from the menu to keep it running after restarts.
+Turn on **Launch at Login** from the ⚙ menu to keep it running after restarts. PowerBar checks GitHub once a day for a newer release and shows it in the ⚙ menu.
 
 ## How it works
 
@@ -55,6 +67,21 @@ Caveats:
 - Watt-hours use the present pack voltage, so they read a few % high near full and a few % low near empty. They can differ from macOS's percentage, which is smoothed.
 - IOReport is a private framework. If a future macOS changes it, the breakdown disappears and everything else keeps working.
 - The per-app list won't add up to the total: most of an idle Mac's power is the display and the rest of the system, which no app "owns" — the breakdown bar shows that part. CPU energy for system daemons like WindowServer isn't readable without root; their GPU use does show up.
+
+## Releasing
+
+Push a version tag and the [release workflow](.github/workflows/release.yml) builds, signs, notarizes, publishes the GitHub release, and bumps the Homebrew cask:
+
+```sh
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+The secrets it needs are listed at the top of the workflow. To release from your own Mac instead, with a Developer ID certificate in your keychain:
+
+```sh
+xcrun notarytool store-credentials powerbar   # once
+NOTARY_PROFILE=powerbar scripts/release.sh 1.0.0 --publish
+```
 
 ## License
 
