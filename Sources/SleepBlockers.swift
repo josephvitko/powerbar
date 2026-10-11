@@ -41,7 +41,7 @@ struct SleepBlocker {
                 if resources.contains(where: { $0.hasPrefix("audio-in") }) {
                     reason = "using the microphone"
                 } else if resources.contains(where: { $0.hasPrefix("audio-out") }) {
-                    reason = "playing audio"
+                    reason = "audio output open"
                 } else if ownerName == "caffeinate" {
                     reason = "preventing idle sleep"
                 } else {

@@ -33,6 +33,9 @@ final class EnergyMonitor {
         while snapshots.count > 2, now.timeIntervalSince(snapshots[1].date) >= window { snapshots.removeFirst() }
     }
 
+    /// True once there are two snapshots to diff.
+    var hasData: Bool { snapshots.count >= 2 }
+
     /// Average watts per app over the window, highest first.
     func topApps(_ n: Int, minimumWatts: Double = 0.05) -> [(name: String, watts: Double)] {
         guard let old = snapshots.first, let new = snapshots.last, new.date > old.date else { return [] }

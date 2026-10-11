@@ -14,7 +14,7 @@ Click it for:
 - **Sparkline** — battery draw over the last 10 minutes
 - **Health** — maximum capacity (matches System Settings), cycle count, temperature
 - **Energy by app** — real per-app watts, with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
-- **Preventing sleep** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app playing audio
+- **Preventing sleep** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
 - **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes. It can be turned off.
 
 It runs with no dependencies or root access, and uses ~0% CPU and ~25 MB of RAM.

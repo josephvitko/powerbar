@@ -69,7 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(label("Energy by app", color: .secondaryLabelColor))
         let apps = energy.topApps(5)
-        if apps.isEmpty { menu.addItem(label("Measuring…", color: .secondaryLabelColor)) }
+        if apps.isEmpty {
+            menu.addItem(label(energy.hasData ? "All apps idle" : "Measuring…", color: .secondaryLabelColor))
+        }
         for app in apps {
             // Pad with figure spaces (digit-width) so the values right-align.
             let w = String(format: "%.1fW", app.watts)
@@ -102,9 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let values = history.samples.map(\.watts)
         guard values.contains(where: { $0 != nil }) else { return }
         let width: CGFloat = 240, height: CGFloat = 34
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: width + leading + 14, height: height + 6))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: width + leading + 14, height: height + 4))
         let spark = SparklineView(values: values, size: NSSize(width: width, height: height))
-        spark.setFrameOrigin(NSPoint(x: leading, y: 3))
+        spark.setFrameOrigin(NSPoint(x: leading + 2, y: 0))  // +2 matches NSTextField's text inset
         view.addSubview(spark)
         let i = NSMenuItem()
         i.view = view
