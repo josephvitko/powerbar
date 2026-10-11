@@ -38,7 +38,8 @@ struct BatteryReading {
 
         return BatteryReading(
             watts: -amps * volts,
-            accessoryWatts: accessoryMilliwatts / 1000,
+            // Ports report ~0.1 W with nothing attached; treat that as zero.
+            accessoryWatts: accessoryMilliwatts >= 500 ? accessoryMilliwatts / 1000 : 0,
             percent: int("CurrentCapacity"),
             // Uses the present pack voltage, so it reads a few % high near full and low near empty.
             remainingWh: Double(int("AppleRawCurrentCapacity")) * volts / 1000,
