@@ -5,17 +5,17 @@ A minimal macOS menu bar app that shows how much power your MacBook is drawing, 
 ```
  9.6W        ← battery draw on battery power
  +45W        ← charging power on AC
- ☕ 9.6W     ← something is keeping your display awake
 ```
 
 Click it for:
 
 - **Battery** — charge, time remaining, 1‑min / 5‑min average draw
 - **Sparkline** — battery draw over the last 10 minutes
+- **USB-C devices** — power the Mac is supplying to a charging phone or other accessory, split out from the Mac's own draw
 - **Health** — maximum capacity (matches System Settings), cycle count, temperature
 - **Apps** — per-app CPU power (watts) and GPU usage (%), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
 - **Preventing sleep** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
-- **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes. It can be turned off.
+- **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It ignores power sent to USB-C devices, fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes. It can be turned off.
 
 It runs with no dependencies or root access, and uses ~0% CPU and ~25 MB of RAM.
 
@@ -38,6 +38,7 @@ cd powerbar
 | Battery watts | `InstantAmperage × Voltage` from the `AppleSmartBattery` IOKit service |
 | Per-app CPU watts | Δ`ri_energy_nj` from `proc_pid_rusage` (the counters Activity Monitor uses), over a 30 s window |
 | Per-app GPU % | Δ`accumulatedGPUTime` of each `IOAccelerator` user client in the IORegistry |
+| USB-C devices | `PowerOutDetails` (per-port milliwatts) on `AppleSmartBattery` |
 | Sleep blockers | `IOPMCopyAssertionsByProcess`, attributing audio assertions to the app actually playing |
 
 Caveats:

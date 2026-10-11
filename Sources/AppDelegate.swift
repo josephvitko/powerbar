@@ -4,7 +4,8 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
-    private var history = PowerHistory(span: 10 * 60)
+    private var history = PowerHistory(span: 10 * 60)      // total battery draw
+    private var macHistory = PowerHistory(span: 10 * 60)   // excluding power sent to USB-C devices
     private let energy = EnergyMonitor()
     private let alerts = DrainAlerts()
     private var blockers: [SleepBlocker] = []
@@ -27,15 +28,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         blockers = SleepBlocker.current()
         guard let r = BatteryReading.read() else { setTitle("—", symbol: "bolt.slash"); return }
         history.append(r.externalConnected ? nil : max(r.watts, 0))
-        alerts.evaluate(history: history, culprit: energy.topApps(1).first)
+        macHistory.append(r.externalConnected ? nil : max(r.watts - r.accessoryWatts, 0))
+        // Alert on the Mac's own draw, so charging a phone doesn't trigger it.
+        alerts.evaluate(history: macHistory, culprit: energy.topApps(1).first)
 
-        // A cup icon flags that something is keeping the display awake.
-        let keepingAwake = blockers.contains { $0.blocksDisplay } ? "cup.and.saucer.fill" : nil
         if r.externalConnected {
             let w = -r.watts
-            setTitle(r.isCharging && w > 0.5 ? String(format: "+%.0fW", w) : "AC", symbol: keepingAwake ?? "bolt.fill")
+            setTitle(r.isCharging && w > 0.5 ? String(format: "+%.0fW", w) : "AC", symbol: "bolt.fill")
         } else {
-            setTitle(String(format: "%.1fW", r.watts), symbol: keepingAwake)
+            setTitle(String(format: "%.1fW", r.watts), symbol: nil)
         }
     }
 
@@ -58,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let a = r.adapterWatts, r.externalConnected { status += " · \(a)W adapter" }
         menu.addItem(label(status))
 
+        if r.accessoryWatts >= 0.5 {
+            let mac = r.externalConnected ? "" : String(format: "Mac %.1fW · ", max(r.watts - r.accessoryWatts, 0))
+            menu.addItem(label(mac + String(format: "USB-C devices %.1fW", r.accessoryWatts)))
+        }
         if !r.externalConnected {
             let a1 = history.average(over: 60).map { String(format: "%.1fW", $0) } ?? "–"
             let a5 = history.average(over: 300).map { String(format: "%.1fW", $0) } ?? "–"
@@ -87,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(label("Preventing sleep", color: .secondaryLabelColor))
             for b in blockers {
                 let what = b.blocksDisplay ? "keeping display on" : b.reason
-                menu.addItem(label("\(b.blocksDisplay ? "☕︎ " : "")\(b.app) — \(what)"))
+                menu.addItem(label("\(b.app) — \(what)"))
             }
         }
 

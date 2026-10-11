@@ -4,6 +4,7 @@ import IOKit
 /// A single reading from the AppleSmartBattery IOKit service.
 struct BatteryReading {
     let watts: Double          // >0 discharging, <0 charging
+    let accessoryWatts: Double // power the Mac is supplying to USB-C devices (e.g. charging a phone)
     let percent: Int
     let minutesLeft: Int?      // nil while calculating / on AC
     let externalConnected: Bool
@@ -28,9 +29,13 @@ struct BatteryReading {
         let avgTTE = int("AvgTimeToEmpty")
         let adapter = (p["AdapterDetails"] as? [String: Any])?["Watts"] as? NSNumber
         let design = max(int("DesignCapacity"), 1)
+        // One entry per USB-C port; "Watts" is in milliwatts.
+        let portsOut = (p["PowerOutDetails"] as? [[String: Any]]) ?? []
+        let accessoryMilliwatts = portsOut.compactMap { ($0["Watts"] as? NSNumber)?.doubleValue }.reduce(0, +)
 
         return BatteryReading(
             watts: -amps * volts,
+            accessoryWatts: accessoryMilliwatts / 1000,
             percent: int("CurrentCapacity"),
             minutesLeft: (!external && avgTTE > 0 && avgTTE < 65535) ? avgTTE : nil,
             externalConnected: external,
