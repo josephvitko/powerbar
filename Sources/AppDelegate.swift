@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var blockers: [SleepBlocker] = []
     private let interval: TimeInterval = 5
 
+    private var showWh: Bool {
+        get { UserDefaults.standard.object(forKey: "showWh") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "showWh"); tick() }
+    }
+
     private let leading: CGFloat = 23
     private var menuFont: NSFont {
         .monospacedDigitSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
@@ -32,11 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Alert on the Mac's own draw, so charging a phone doesn't trigger it.
         alerts.evaluate(history: macHistory, culprit: energy.topApps(1).first)
 
+        let wh = showWh ? String(format: " · %.0fWh", r.remainingWh) : ""
         if r.externalConnected {
             let w = -r.watts
-            setTitle(r.isCharging && w > 0.5 ? String(format: "+%.0fW", w) : "AC", symbol: "bolt.fill")
+            setTitle((r.isCharging && w > 0.5 ? String(format: "+%.0fW", w) : "AC") + wh, symbol: "bolt.fill")
         } else {
-            setTitle(String(format: "%.1fW", r.watts), symbol: nil)
+            setTitle(String(format: "%.1fW", r.watts) + wh, symbol: nil)
         }
     }
 
@@ -53,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         guard let r = BatteryReading.read() else { menu.addItem(label("Battery unavailable")); return }
 
-        var status = "Battery \(r.percent)%"
+        var status = String(format: "Battery %.1f / %.1f Wh", r.remainingWh, r.fullWh)
         if let m = r.minutesLeft { status += String(format: " · %d:%02d left", m / 60, m % 60) }
         else if r.externalConnected { status += r.isCharging ? " · charging" : " · on AC" }
         if let a = r.adapterWatts, r.externalConnected { status += " · \(a)W adapter" }
@@ -69,7 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(label("Avg 1 min \(a1) · 5 min \(a5)"))
         }
         addSparkline()
-        menu.addItem(label(String(format: "Health %d%% · %d cycles · %.0f°C", r.healthPercent, r.cycles, r.tempC)))
+        menu.addItem(label(String(format: "Health %d%% (%.0f of %.0f Wh new) · %d cycles · %.0f°C",
+                                  r.healthPercent, r.fullWh, r.designWh, r.cycles, r.tempC)))
 
         menu.addItem(.separator())
         let apps = energy.topApps(5)
@@ -98,6 +105,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(alertsMenu())
+        let wh = NSMenuItem(title: "Show Wh in Menu Bar", action: #selector(toggleWh), keyEquivalent: "")
+        wh.target = self
+        wh.state = showWh ? .on : .off
+        menu.addItem(wh)
         let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -176,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func setThreshold(_ sender: NSMenuItem) { alerts.threshold = Double(sender.tag) }
     @objc private func setDuration(_ sender: NSMenuItem) { alerts.minutes = sender.tag }
+
+    @objc private func toggleWh() { showWh.toggle() }
 
     @objc private func toggleLogin() {
         let svc = SMAppService.mainApp

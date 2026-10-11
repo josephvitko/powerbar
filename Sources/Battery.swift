@@ -6,6 +6,9 @@ struct BatteryReading {
     let watts: Double          // >0 discharging, <0 charging
     let accessoryWatts: Double // power the Mac is supplying to USB-C devices (e.g. charging a phone)
     let percent: Int
+    let remainingWh: Double    // charge left, from the gauge's raw mAh × pack voltage
+    let fullWh: Double         // full-charge capacity today
+    let designWh: Double       // capacity when new
     let minutesLeft: Int?      // nil while calculating / on AC
     let externalConnected: Bool
     let isCharging: Bool
@@ -37,6 +40,10 @@ struct BatteryReading {
             watts: -amps * volts,
             accessoryWatts: accessoryMilliwatts / 1000,
             percent: int("CurrentCapacity"),
+            // Uses the present pack voltage, so it reads a few % high near full and low near empty.
+            remainingWh: Double(int("AppleRawCurrentCapacity")) * volts / 1000,
+            fullWh: Double(int("NominalChargeCapacity")) * volts / 1000,
+            designWh: Double(design) * volts / 1000,
             minutesLeft: (!external && avgTTE > 0 && avgTTE < 65535) ? avgTTE : nil,
             externalConnected: external,
             isCharging: (p["IsCharging"] as? Bool) ?? false,

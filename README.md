@@ -3,13 +3,13 @@
 A minimal macOS menu bar app that shows how much power your MacBook is drawing, live.
 
 ```
- 9.6W        ← battery draw on battery power
- +45W        ← charging power on AC
+ 9.6W · 29Wh     ← battery draw · energy left
+ +45W · 29Wh     ← charging power on AC
 ```
 
 Click it for:
 
-- **Battery** — charge, time remaining, 1‑min / 5‑min average draw
+- **Battery** — energy left and full capacity in watt-hours (no percentages), time remaining, 1‑min / 5‑min average draw. Wh in the menu bar can be turned off.
 - **Sparkline** — battery draw over the last 10 minutes
 - **USB-C devices** — power the Mac is supplying to a charging phone or other accessory, split out from the Mac's own draw
 - **Health** — maximum capacity (matches System Settings), cycle count, temperature
@@ -38,12 +38,14 @@ cd powerbar
 | Battery watts | `InstantAmperage × Voltage` from the `AppleSmartBattery` IOKit service |
 | Per-app CPU watts | Δ`ri_energy_nj` from `proc_pid_rusage` (the counters Activity Monitor uses), over a 30 s window |
 | Per-app GPU % | Δ`accumulatedGPUTime` of each `IOAccelerator` user client in the IORegistry |
+| Watt-hours | `AppleRawCurrentCapacity` / `NominalChargeCapacity` (mAh) × present pack voltage |
 | USB-C devices | `PowerOutDetails` (per-port milliwatts) on `AppleSmartBattery` |
 | Sleep blockers | `IOPMCopyAssertionsByProcess`, attributing audio assertions to the app actually playing |
 
 Caveats:
 
 - The battery gauge refreshes its current reading roughly once a minute, so the menu bar number moves in steps. The averages are the better guide.
+- Watt-hours use the present pack voltage, so they read a few % high near full and a few % low near empty. They can differ from macOS's percentage, which is smoothed.
 - On AC power it shows charging power, not total system power (that would need `powermetrics` and root).
 - The per-app list won't add up to the battery number. It excludes the display backlight (often the biggest draw), macOS doesn't expose per-app GPU *power* (only GPU busy time), and CPU energy for system daemons like WindowServer isn't readable without root. Their GPU use does show up.
 
