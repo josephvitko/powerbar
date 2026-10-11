@@ -201,10 +201,10 @@ struct PanelView: View {
     private var chartSummary: String {
         switch model.range {
         case .live:
-            let watts = model.live.samples.compactMap(\.watts)
-            guard !watts.isEmpty else { return "On power for the last 10 minutes" }
-            var s = "Peak " + String(format: "%.1f W", watts.max()!)
-            if let a = model.averageWatts { s = String(format: "Average %.1f W · ", a) + s }
+            let watts = model.chartLive.compactMap(\.watts)
+            guard !watts.isEmpty else { return "Measuring…" }
+            var s = String(format: "Average %.1f W · peak %.1f W", watts.reduce(0, +) / Double(watts.count), watts.max()!)
+            if model.chartLive.contains(where: \.onAC) { s += " · shaded: on power" }
             return s
         case .day:
             let mins = model.history.minutes(since: Date().addingTimeInterval(-86400)).filter { !$0.onAC }

@@ -59,6 +59,8 @@ final class PanelModel: ObservableObject {
     private var systemLive = PowerHistory(span: 10 * 60)       // the Mac's own power, on battery or AC
     private var accessoryLive = PowerHistory(span: 10 * 60)    // power sent to USB-C devices
     let appHistory = AppHistory()
+    /// Power use for the live chart (see `chartSeries`), 5 s samples for 10 minutes.
+    private(set) var chartLive: [(date: Date, watts: Double?, onAC: Bool)] = []
     let updates = UpdateCheck()
     private(set) var lowPower: LowPowerMode?
     let history = HistoryStore()
@@ -90,6 +92,10 @@ final class PanelModel: ObservableObject {
             macLive.append(r.externalConnected ? nil : r.macWatts)
             systemLive.append(r.macWatts)
             accessoryLive.append(r.accessoryWatts)
+            let now = Date()
+            let use = r.macWatts.map { $0 + r.accessoryWatts } ?? (r.externalConnected ? nil : max(r.watts, 0))
+            chartLive.append((now, use, r.externalConnected))
+            chartLive.removeAll { now.timeIntervalSince($0.date) > 600 }
             history.record(r, chip: soc.latest)
         }
         // Alert on the Mac's own draw, so charging a phone doesn't trigger it.
@@ -194,32 +200,40 @@ final class PanelModel: ObservableObject {
         return now.addingTimeInterval(range == .live ? -600 : -86400)...now
     }
 
+    /// Power use over time — the Mac plus any USB-C devices, on battery or AC (on battery this
+    /// equals battery draw). Time on AC comes back as bands for shading.
     func chartSeries(for range: ChartRange) -> (points: [ChartPoint], bands: [ChartBand]) {
-        let samples: [(date: Date, watts: Double?)]
+        typealias Sample = (date: Date, watts: Double?, onAC: Bool)
+        func usage(_ m: HistoryStore.Minute) -> Sample {
+            (m.date.addingTimeInterval(30), m.macWatts.map { $0 + m.accessoryWatts } ?? m.drawWatts, m.onAC)
+        }
+        let samples: [Sample]
         let step: TimeInterval
         switch range {
         case .live:
             // Live samples only exist since launch; fill the earlier part from saved minutes.
-            let start = Date().addingTimeInterval(-600)
-            let firstLive = live.samples.first?.date ?? Date()
-            let saved = history.minutes(since: start).filter { $0.date.addingTimeInterval(60) <= firstLive }
-            samples = saved.map { ($0.date.addingTimeInterval(30), $0.drawWatts) } + live.samples
+            let firstLive = chartLive.first?.date ?? Date()
+            let saved = history.minutes(since: Date().addingTimeInterval(-600)).filter { $0.date.addingTimeInterval(60) <= firstLive }
+            samples = saved.map(usage) + chartLive
             step = saved.isEmpty ? 5 : 60
         case .day, .week:
-            samples = history.minutes(since: Date().addingTimeInterval(-86400)).map { ($0.date, $0.drawWatts) }
+            samples = history.minutes(since: Date().addingTimeInterval(-86400)).map(usage)
             step = 60
         }
 
         var points: [ChartPoint] = [], bands: [ChartBand] = []
         var segment = 0, prev: Date?, bandStart: Date?
         for s in samples {
-            let gap = prev.map { s.date.timeIntervalSince($0) > step * 3 } ?? false
+            if let p = prev, s.date.timeIntervalSince(p) > step * 3 {
+                segment += 1   // asleep or not running: break the line and any band
+                if let b = bandStart { bands.append(ChartBand(start: b, end: p.addingTimeInterval(step))); bandStart = nil }
+            }
+            if s.onAC, bandStart == nil { bandStart = s.date }
+            if !s.onAC, let b = bandStart { bands.append(ChartBand(start: b, end: s.date)); bandStart = nil }
             if let w = s.watts {
-                if let b = bandStart { bands.append(ChartBand(start: b, end: s.date)); bandStart = nil }
-                if gap { segment += 1 }
                 points.append(ChartPoint(date: s.date, watts: w, segment: segment))
             } else {
-                if bandStart == nil { bandStart = s.date; segment += 1 }
+                segment += 1
             }
             prev = s.date
         }

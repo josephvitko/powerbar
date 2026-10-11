@@ -7,7 +7,7 @@ struct BatteryReading {
     let accessoryWatts: Double // power the Mac is supplying to USB-C devices (e.g. charging a phone)
     let systemWatts: Double?   // whole-system power from the SMC (includes USB-C devices); works on AC too
     let percent: Int
-    let remainingWh: Double    // charge left, from the gauge's raw mAh × pack voltage
+    let remainingWh: Double    // charge left, from the gauge's raw mAh × nominal pack voltage
     let fullWh: Double         // full-charge capacity today
     let designWh: Double       // capacity when new
     let minutesLeft: Int?      // nil while calculating / on AC
@@ -39,6 +39,9 @@ struct BatteryReading {
         let avgTTE = int("AvgTimeToEmpty")
         let adapter = (p["AdapterDetails"] as? [String: Any])?["Watts"] as? NSNumber
         let design = max(int("DesignCapacity"), 1)
+        // Apple's Li-ion cells are rated at ~3.86 V (e.g. 72.4 Wh ÷ 6249 mAh ÷ 3 cells).
+        let cells = ((p["BatteryData"] as? [String: Any])?["CellVoltage"] as? [Any])?.count ?? 3
+        let nominalVolts = 3.86 * Double(cells)
         // One entry per USB-C port; "Watts" is in milliwatts.
         let portsOut = (p["PowerOutDetails"] as? [[String: Any]]) ?? []
         let accessoryMilliwatts = portsOut.compactMap { ($0["Watts"] as? NSNumber)?.doubleValue }.reduce(0, +)
@@ -53,10 +56,11 @@ struct BatteryReading {
             accessoryWatts: accessoryMilliwatts >= 500 ? accessoryMilliwatts / 1000 : 0,
             systemWatts: system,
             percent: int("CurrentCapacity"),
-            // Uses the present pack voltage, so it reads a few % high near full and low near empty.
-            remainingWh: Double(int("AppleRawCurrentCapacity")) * volts / 1000,
-            fullWh: Double(int("NominalChargeCapacity")) * volts / 1000,
-            designWh: Double(design) * volts / 1000,
+            // Nominal (rated) voltage, not the present one, which swings ~11–13 V with charge
+            // state and would make capacities drift while charging.
+            remainingWh: Double(int("AppleRawCurrentCapacity")) * nominalVolts / 1000,
+            fullWh: Double(int("NominalChargeCapacity")) * nominalVolts / 1000,
+            designWh: Double(design) * nominalVolts / 1000,
             minutesLeft: (!external && avgTTE > 0 && avgTTE < 65535) ? avgTTE : nil,
             externalConnected: external,
             isCharging: (p["IsCharging"] as? Bool) ?? false,
