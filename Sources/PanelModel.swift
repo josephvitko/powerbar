@@ -14,12 +14,33 @@ struct ChartPoint: Identifiable {
     var id: Date { date }
 }
 
+/// Live views show average watts; 24 h and 7 days show energy used.
+enum Measure {
+    case watts, wattHours
+
+    func format(_ v: Double) -> String {
+        switch self {
+        case .watts: String(format: v < 0.995 ? "%.2f W" : "%.1f W", v)
+        case .wattHours: String(format: v < 9.95 ? "%.1f Wh" : "%.0f Wh", v)
+        }
+    }
+}
+
 /// One part of the Mac's power use, for the breakdown bar.
 struct PowerSlice: Identifiable {
     enum Kind: String { case cpu = "CPU", gpu = "GPU", memory = "Memory", otherChip = "Other chip", rest = "Display & rest", usb = "USB-C devices" }
     let kind: Kind
-    let watts: Double
+    let value: Double
     var id: Kind { kind }
+}
+
+struct AppRow: Identifiable {
+    let name: String
+    let bundlePath: String?
+    let cpu: Double
+    let gpu: Double
+    var total: Double { cpu + gpu }
+    var id: String { name }
 }
 
 struct ChartBand: Identifiable {   // a stretch of time on AC power
@@ -32,11 +53,12 @@ struct ChartBand: Identifiable {   // a stretch of time on AC power
 /// the panel is visible, so the app does no rendering work in the background.
 final class PanelModel: ObservableObject {
     private(set) var reading: BatteryReading?
-    private(set) var apps: [EnergyMonitor.AppUsage] = []
     private(set) var blockers: [SleepBlocker] = []
     private(set) var live = PowerHistory(span: 10 * 60)        // total battery draw, 5 s samples
     private var macLive = PowerHistory(span: 10 * 60)          // excluding power sent to USB-C devices; nil on AC
-    private var systemLive = PowerHistory(span: 2 * 60)        // the Mac's own power, on battery or AC
+    private var systemLive = PowerHistory(span: 10 * 60)       // the Mac's own power, on battery or AC
+    private var accessoryLive = PowerHistory(span: 10 * 60)    // power sent to USB-C devices
+    let appHistory = AppHistory()
     private(set) var lowPower: LowPowerMode?
     let history = HistoryStore()
     let alerts = DrainAlerts()
@@ -55,19 +77,21 @@ final class PanelModel: ObservableObject {
     }
 
     func tick() {
-        energy.sample()
         soc.sample()
+        if let delta = energy.sample(gpuWatts: soc.latest?.gpu) {
+            appHistory.add(seconds: delta.seconds, apps: delta.apps)
+        }
         blockers = SleepBlocker.current()
-        apps = energy.topApps(5, gpuPower: soc.average(over: 60)?.gpu)
         reading = BatteryReading.read()
         if let r = reading {
             live.append(r.externalConnected ? nil : max(r.watts, 0))
             macLive.append(r.externalConnected ? nil : r.macWatts)
             systemLive.append(r.macWatts)
-            history.record(r)
+            accessoryLive.append(r.accessoryWatts)
+            history.record(r, chip: soc.latest)
         }
         // Alert on the Mac's own draw, so charging a phone doesn't trigger it.
-        alerts.evaluate(history: macLive, culprit: apps.first)
+        alerts.evaluate(history: macLive, culprit: apps(for: .live).first)
         if isVisible { objectWillChange.send() }
     }
 
@@ -92,20 +116,73 @@ final class PanelModel: ObservableObject {
         return Int(wh / w * 60)
     }
 
-    /// Where the Mac's power is going over the last minute: chip parts from IOReport, and
-    /// the remainder of SMC system power (display backlight, SSD, Wi-Fi, power conversion…).
-    var breakdown: [PowerSlice]? {
-        guard let r = reading, let chip = soc.average(over: 60),
-              let mac = systemLive.average(over: 60) ?? r.macWatts else { return nil }
-        var slices: [PowerSlice] = [
-            .init(kind: .cpu, watts: chip.cpu),
-            .init(kind: .gpu, watts: chip.gpu),
-            .init(kind: .memory, watts: chip.memory),
-            .init(kind: .otherChip, watts: chip.otherChip),
-            .init(kind: .rest, watts: max(mac - chip.total, 0)),
+    // MARK: - Breakdown and apps per range
+
+    func measure(for range: ChartRange) -> Measure { range == .live ? .watts : .wattHours }
+
+    /// Minutes of live data behind the 10 min view (less right after launch).
+    var liveMinutes: Int { min(max(Int((appHistory.recentWatts().seconds / 60).rounded(.up)), 1), 10) }
+
+    /// Start of the period a range covers. 7 days matches the bar chart: today plus the 6 days before.
+    func rangeStart(_ range: ChartRange) -> Date {
+        switch range {
+        case .live: Date().addingTimeInterval(-600)
+        case .day: Date().addingTimeInterval(-86400)
+        case .week: Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))!
+        }
+    }
+
+    /// Where the Mac's power went: chip parts from IOReport, and the remainder of SMC system
+    /// power ("Display & rest": backlight, SSD, Wi-Fi, power conversion…). Average watts for
+    /// the live range; watt-hours from saved minutes for 24 h and 7 days.
+    func breakdown(for range: ChartRange) -> [PowerSlice]? {
+        var chip = SoCPower.Breakdown(), mac = 0.0, usb = 0.0
+        if range == .live {
+            guard let c = soc.average(over: 600), let m = systemLive.average(over: 600) ?? reading?.macWatts else { return nil }
+            chip = c
+            mac = m
+            usb = accessoryLive.average(over: 600) ?? 0
+        } else {
+            let minutes = history.minutes(since: rangeStart(range)).filter { $0.chip != nil && $0.macWatts != nil }
+            guard !minutes.isEmpty else { return nil }
+            for m in minutes {
+                chip = chip + m.chip! * (1.0 / 60)
+                mac += m.macWatts! / 60
+                usb += m.accessoryWatts / 60
+            }
+        }
+        let slices: [PowerSlice] = [
+            .init(kind: .cpu, value: chip.cpu),
+            .init(kind: .gpu, value: chip.gpu),
+            .init(kind: .memory, value: chip.memory),
+            .init(kind: .otherChip, value: chip.otherChip),
+            .init(kind: .rest, value: max(mac - chip.total, 0)),
+            .init(kind: .usb, value: usb),
         ]
-        if r.accessoryWatts >= 0.5 { slices.append(.init(kind: .usb, watts: r.accessoryWatts)) }
-        return slices.filter { $0.watts >= 0.05 }
+        return slices.filter { $0.value >= 0.05 }
+    }
+
+    /// Heaviest apps over the range: average watts (live) or watt-hours (24 h, 7 days).
+    func apps(for range: ChartRange, limit: Int = 5) -> [AppRow] {
+        let values: [String: AppEnergy]
+        if range == .live {
+            values = appHistory.recentWatts().apps
+        } else {
+            values = appHistory.energy(since: rangeStart(range)).mapValues { AppEnergy(cpu: $0.cpu / 3600, gpu: $0.gpu / 3600) }
+        }
+        return values
+            .filter { $0.value.total >= (range == .live ? 0.05 : 0.01) }
+            .sorted { $0.value.total > $1.value.total }
+            .prefix(limit)
+            .map { AppRow(name: $0.key, bundlePath: bundlePath(for: $0.key), cpu: $0.value.cpu, gpu: $0.value.gpu) }
+    }
+
+    private func bundlePath(for app: String) -> String? {
+        if let p = energy.bundlePaths[app] { return p }
+        // Apps seen only in saved history: look in the usual places.
+        return ["/Applications", "/System/Applications", "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+            .map { "\($0)/\(app).app" }
+            .first { FileManager.default.fileExists(atPath: $0) }
     }
 
     // MARK: - Chart data

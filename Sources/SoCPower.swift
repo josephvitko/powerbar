@@ -8,7 +8,18 @@ final class SoCPower {
     struct Breakdown {
         var cpu = 0.0, gpu = 0.0, memory = 0.0, otherChip = 0.0   // watts
         var total: Double { cpu + gpu + memory + otherChip }
+
+        static func + (a: Breakdown, b: Breakdown) -> Breakdown {
+            Breakdown(cpu: a.cpu + b.cpu, gpu: a.gpu + b.gpu, memory: a.memory + b.memory, otherChip: a.otherChip + b.otherChip)
+        }
+
+        static func * (a: Breakdown, k: Double) -> Breakdown {
+            Breakdown(cpu: a.cpu * k, gpu: a.gpu * k, memory: a.memory * k, otherChip: a.otherChip * k)
+        }
     }
+
+    /// Average power over the interval between the last two samples.
+    var latest: Breakdown? { history.last?.breakdown }
 
     private typealias CopyChannels = @convention(c) (CFString, CFString?, UInt64, UInt64, UInt64) -> Unmanaged<CFMutableDictionary>?
     private typealias CreateSubscription = @convention(c) (UnsafeMutableRawPointer?, CFMutableDictionary,
@@ -28,7 +39,7 @@ final class SoCPower {
 
     private var previous: (date: Date, sample: CFDictionary)?
     private var history: [(date: Date, seconds: Double, breakdown: Breakdown)] = []
-    private let span: TimeInterval = 120
+    private let span: TimeInterval = 600
 
     init() {
         guard let lib = dlopen("/usr/lib/libIOReport.dylib", RTLD_NOW) else { return }

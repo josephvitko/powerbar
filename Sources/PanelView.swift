@@ -10,10 +10,8 @@ struct PanelView: View {
             if let r = model.reading {
                 header(r)
                 chartSection
-                if let slices = model.breakdown, !slices.isEmpty {
-                    Divider()
-                    breakdownSection(slices)
-                }
+                Divider()
+                breakdownSection
                 Divider()
                 appsSection
                 if !model.blockers.isEmpty {
@@ -228,38 +226,53 @@ struct PanelView: View {
 
     // MARK: Breakdown
 
-    private func breakdownSection(_ slices: [PowerSlice]) -> some View {
-        let total = slices.map(\.watts).reduce(0, +)
+    /// Caption saying what period and unit the breakdown and apps cover; follows the chart's range.
+    private var rangeCaption: String {
+        switch model.range {
+        case .live: "avg, last \(model.liveMinutes) min"
+        case .day: "used, last 24 h"
+        case .week: "used, last 7 days"
+        }
+    }
+
+    private var breakdownSection: some View {
+        let slices = model.breakdown(for: model.range) ?? []
+        let measure = model.measure(for: model.range)
+        let total = slices.map(\.value).reduce(0, +)
         let gap: CGFloat = 2
         return VStack(alignment: .leading, spacing: 9) {
             HStack {
                 sectionTitle("Where it's going")
                 Spacer()
-                Text("last minute").font(.caption2).foregroundStyle(.tertiary)
+                Text(rangeCaption).font(.caption2).foregroundStyle(.tertiary)
             }
-            // Part-to-whole bar with a 2 pt surface gap between segments.
-            GeometryReader { geo in
-                let available = geo.size.width - gap * CGFloat(slices.count - 1)
-                HStack(spacing: gap) {
-                    ForEach(slices) { slice in
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(Palette.color(slice.kind))
-                            .frame(width: max(available * slice.watts / total, 1))
+            if slices.isEmpty {
+                Text("Builds up as PowerBar records.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                // Part-to-whole bar with a 2 pt surface gap between segments.
+                GeometryReader { geo in
+                    let available = geo.size.width - gap * CGFloat(slices.count - 1)
+                    HStack(spacing: gap) {
+                        ForEach(slices) { slice in
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(Palette.color(slice.kind))
+                                .frame(width: max(available * slice.value / total, 1))
+                        }
                     }
                 }
-            }
-            .frame(height: 10)
-            // Legend doubles as the labels: every segment's value is written out.
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 18, alignment: .leading),
-                                GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 5) {
-                ForEach(slices) { slice in
-                    HStack(spacing: 6) {
-                        Circle().fill(Palette.color(slice.kind)).frame(width: 7, height: 7)
-                        Text(slice.kind.rawValue).foregroundStyle(.secondary)
-                        Spacer(minLength: 4)
-                        Text(String(format: "%.1f W", slice.watts)).monospacedDigit()
+                .frame(height: 10)
+                // Legend doubles as the labels: every segment's value is written out.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 18, alignment: .leading),
+                                    GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 5) {
+                    ForEach(slices) { slice in
+                        HStack(spacing: 6) {
+                            Circle().fill(Palette.color(slice.kind)).frame(width: 7, height: 7)
+                            Text(slice.kind.rawValue).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Text(measure.format(slice.value)).monospacedDigit()
+                        }
+                        .font(.caption)
                     }
-                    .font(.caption)
                 }
             }
         }
@@ -269,10 +282,12 @@ struct PanelView: View {
     // MARK: Apps
 
     private var appsSection: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let apps = model.apps(for: model.range)
+        let measure = model.measure(for: model.range)
+        func cell(_ v: Double) -> String { v >= 0.005 ? measure.format(v) : "–" }
+        return VStack(alignment: .leading, spacing: 7) {
             HStack {
                 sectionTitle("Apps")
-                Text("last minute").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
                 Text("CPU").frame(width: 60, alignment: .trailing)
                 Text("GPU").frame(width: 60, alignment: .trailing)
@@ -280,17 +295,17 @@ struct PanelView: View {
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
 
-            if model.apps.isEmpty {
-                Text("Nothing using notable CPU or GPU").font(.callout).foregroundStyle(.secondary)
+            if apps.isEmpty {
+                Text(model.range == .live ? "Nothing using notable CPU or GPU" : "Builds up as PowerBar records.")
+                    .font(.callout).foregroundStyle(.secondary)
             }
-            ForEach(model.apps) { app in
+            ForEach(apps) { app in
                 HStack(spacing: 8) {
                     appIcon(app)
                     Text(app.name).lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 8)
-                    Text(app.cpuWatts.flatMap { $0 >= 0.005 ? String(format: "%.2f W", $0) : nil } ?? "–")
-                        .frame(width: 60, alignment: .trailing)
-                    Text(gpuText(app)).frame(width: 60, alignment: .trailing)
+                    Text(cell(app.cpu)).frame(width: 60, alignment: .trailing)
+                    Text(cell(app.gpu)).frame(width: 60, alignment: .trailing)
                 }
                 .font(.callout)
                 .monospacedDigit()
@@ -298,12 +313,7 @@ struct PanelView: View {
         }
     }
 
-    private func gpuText(_ app: EnergyMonitor.AppUsage) -> String {
-        if let w = app.gpuWatts { return w >= 0.005 ? String(format: "%.2f W", w) : "–" }
-        return app.gpuPercent >= 0.5 ? String(format: "%.0f%%", app.gpuPercent) : "–"
-    }
-
-    @ViewBuilder private func appIcon(_ app: EnergyMonitor.AppUsage) -> some View {
+    @ViewBuilder private func appIcon(_ app: AppRow) -> some View {
         if let path = app.bundlePath {
             Image(nsImage: NSWorkspace.shared.icon(forFile: path)).resizable().frame(width: 16, height: 16)
         } else {

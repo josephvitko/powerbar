@@ -43,6 +43,8 @@ struct SleepBlocker: Identifiable {
                     reason = "using the microphone"
                 } else if resources.contains(where: { $0.hasPrefix("audio-out") }) {
                     reason = "audio output open"
+                } else if ownerName == "cameracaptured" {
+                    reason = "camera in use"
                 } else if ownerName == "caffeinate" {
                     reason = "preventing idle sleep"
                 } else {

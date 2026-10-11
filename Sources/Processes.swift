@@ -17,10 +17,18 @@ enum Processes {
     }
 
     static func parent(_ pid: pid_t) -> pid_t? {
+        bsdInfo(pid).map { pid_t($0.pbi_ppid) }
+    }
+
+    static func startTime(_ pid: pid_t) -> Date? {
+        bsdInfo(pid).map { Date(timeIntervalSince1970: Double($0.pbi_start_tvsec) + Double($0.pbi_start_tvusec) / 1e6) }
+    }
+
+    private static func bsdInfo(_ pid: pid_t) -> proc_bsdinfo? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-        return pid_t(info.pbi_ppid)
+        return info
     }
 
     /// Path of the outermost `.app` bundle containing the executable, if any.

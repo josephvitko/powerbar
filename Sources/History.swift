@@ -9,6 +9,8 @@ final class HistoryStore {
         let accessoryWatts: Double   // supplied to USB-C devices
         let onAC: Bool
         let remainingWh: Double
+        var macWatts: Double? = nil            // the Mac's own power (SMC system − USB-C), battery or AC
+        var chip: SoCPower.Breakdown? = nil    // CPU / GPU / memory / other chip
 
         /// Battery draw while unplugged; nil on AC.
         var drawWatts: Double? { onAC ? nil : max(batteryWatts, 0) }
@@ -26,26 +28,32 @@ final class HistoryStore {
     private(set) var minutes: [Minute] = []
     private let url: URL
     private let retention: TimeInterval = 30 * 86400
-    private var bucket: (start: Date, battery: Double, accessory: Double, acCount: Int, count: Int, wh: Double)?
+    private struct Bucket {
+        let start: Date
+        var battery = 0.0, accessory = 0.0, wh = 0.0
+        var acCount = 0, count = 0
+        var mac = 0.0, macCount = 0
+        var chip = SoCPower.Breakdown(), chipCount = 0
+    }
+    private var bucket: Bucket?
 
     init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PowerBar", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        url = dir.appendingPathComponent("history.csv")
+        url = Storage.directory.appendingPathComponent("history.csv")
         load()
     }
 
     /// Adds a reading to the current minute, writing the previous minute out once it's complete.
-    func record(_ r: BatteryReading, at date: Date = Date()) {
+    func record(_ r: BatteryReading, chip: SoCPower.Breakdown?, at date: Date = Date()) {
         let start = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded(.down) * 60)
         if let b = bucket, b.start != start { flush() }
-        var b = bucket ?? (start, 0, 0, 0, 0, 0)
+        var b = bucket ?? Bucket(start: start)
         b.battery += r.watts
         b.accessory += r.accessoryWatts
         b.acCount += r.externalConnected ? 1 : 0
         b.count += 1
         b.wh = r.remainingWh
+        if let mac = r.macWatts { b.mac += mac; b.macCount += 1 }
+        if let c = chip { b.chip = b.chip + c; b.chipCount += 1 }
         bucket = b
     }
 
@@ -85,7 +93,9 @@ final class HistoryStore {
         bucket = nil
         let n = Double(b.count)
         let m = Minute(date: b.start, batteryWatts: b.battery / n, accessoryWatts: b.accessory / n,
-                       onAC: b.acCount * 2 >= b.count, remainingWh: b.wh)
+                       onAC: b.acCount * 2 >= b.count, remainingWh: b.wh,
+                       macWatts: b.macCount > 0 ? b.mac / Double(b.macCount) : nil,
+                       chip: b.chipCount > 0 ? b.chip * (1 / Double(b.chipCount)) : nil)
         insert(m)
         append(Self.line(m))
     }
@@ -94,14 +104,24 @@ final class HistoryStore {
     /// (the app was restarted partway through it and both halves were saved).
     private func insert(_ m: Minute) {
         guard let last = minutes.last, last.date == m.date else { minutes.append(m); return }
+        func avg(_ a: Double?, _ b: Double?) -> Double? { a.flatMap { x in b.map { (x + $0) / 2 } } ?? a ?? b }
+        let chip: SoCPower.Breakdown? = switch (last.chip, m.chip) {
+        case let (a?, b?): (a + b) * 0.5
+        case let (a, b): a ?? b
+        }
         minutes[minutes.count - 1] = Minute(date: m.date, batteryWatts: (last.batteryWatts + m.batteryWatts) / 2,
                                             accessoryWatts: (last.accessoryWatts + m.accessoryWatts) / 2,
-                                            onAC: last.onAC && m.onAC, remainingWh: m.remainingWh)
+                                            onAC: last.onAC && m.onAC, remainingWh: m.remainingWh,
+                                            macWatts: avg(last.macWatts, m.macWatts), chip: chip)
     }
 
+    // time,battery,accessory,onAC,remainingWh,mac,cpu,gpu,memory,otherChip (last five may be empty)
     private static func line(_ m: Minute) -> String {
-        String(format: "%.0f,%.2f,%.2f,%d,%.2f\n", m.date.timeIntervalSince1970, m.batteryWatts, m.accessoryWatts,
-               m.onAC ? 1 : 0, m.remainingWh)
+        func f(_ v: Double?) -> String { v.map { String(format: "%.2f", $0) } ?? "" }
+        return String(format: "%.0f,%.2f,%.2f,%d,%.2f", m.date.timeIntervalSince1970, m.batteryWatts, m.accessoryWatts,
+                      m.onAC ? 1 : 0, m.remainingWh)
+            + "," + [f(m.macWatts), f(m.chip?.cpu), f(m.chip?.gpu), f(m.chip?.memory), f(m.chip?.otherChip)].joined(separator: ",")
+            + "\n"
     }
 
     private func append(_ text: String) {
@@ -120,13 +140,20 @@ final class HistoryStore {
         let cutoff = Date().addingTimeInterval(-retention)
         var dropped = false
         for line in text.split(separator: "\n") {
-            let f = line.split(separator: ",")
-            guard f.count == 5, let t = Double(f[0]), let b = Double(f[1]), let a = Double(f[2]),
+            let f = line.split(separator: ",", omittingEmptySubsequences: false)
+            guard f.count == 5 || f.count == 10, let t = Double(f[0]), let b = Double(f[1]), let a = Double(f[2]),
                   let wh = Double(f[4]) else { dropped = true; continue }
             let date = Date(timeIntervalSince1970: t)
             guard date >= cutoff else { dropped = true; continue }
+            var m = Minute(date: date, batteryWatts: b, accessoryWatts: a, onAC: f[3] == "1", remainingWh: wh)
+            if f.count == 10 {
+                m.macWatts = Double(f[5])
+                if let cpu = Double(f[6]), let gpu = Double(f[7]), let mem = Double(f[8]), let other = Double(f[9]) {
+                    m.chip = SoCPower.Breakdown(cpu: cpu, gpu: gpu, memory: mem, otherChip: other)
+                }
+            }
             let before = minutes.count
-            insert(Minute(date: date, batteryWatts: b, accessoryWatts: a, onAC: f[3] == "1", remainingWh: wh))
+            insert(m)
             if minutes.count == before { dropped = true }   // merged a duplicate; rewrite the file
         }
         if dropped { try? minutes.map(Self.line).joined().write(to: url, atomically: true, encoding: .utf8) }

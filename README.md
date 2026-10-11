@@ -10,7 +10,8 @@ A minimal macOS menu bar app that shows how much power your MacBook is drawing, 
 Click it for a panel (like Control Center) with:
 
 - **Now** — battery draw in watts, energy left in watt-hours (no percentages), and time left from Wh ÷ your recent average draw. When the Mac is charging a phone or other USB-C device, the draw is split into Mac vs USB-C, with time left if you unplugged it.
-- **History** — a chart of battery draw over the last **10 min** or **24 h**, and a **7-day** bar chart of watt-hours used per day (split into Mac vs USB-C devices). Time on power is shaded; your drain-alert threshold is drawn as a dashed line. One-minute averages are kept for 30 days in `~/Library/Application Support/PowerBar/history.csv`.
+- **History** — a chart of battery draw over the last **10 min** or **24 h**, and a **7-day** bar chart of watt-hours used per day (split into Mac vs USB-C devices). Time on power is shaded; your drain-alert threshold is drawn as a dashed line. One-minute averages (including the breakdown) are kept for 30 days in `~/Library/Application Support/PowerBar/history.csv`, and hourly per-app energy in `apps.csv` next to it.
+- **Where it's going** and **Apps** follow the chart's range: average watts over the last 10 minutes, or energy used (Wh) over the last 24 hours or 7 days.
 - **Where it's going** — the Mac's power split into CPU, GPU, memory, other chip parts (Neural Engine, media engines, display engine), **display & rest** (backlight, SSD, Wi‑Fi, power conversion — whatever's left of the system total), and USB‑C devices
 - **Apps** — per-app CPU power and GPU power in watts (each app's share of measured GPU power, by GPU busy time), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
 - **Keeping awake** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open

@@ -30,7 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_ note: Notification) { model.history.flush() }
+    func applicationWillTerminate(_ note: Notification) {
+        model.history.flush()
+        model.appHistory.flush()
+    }
 
     @objc private func togglePanel() { panel.toggle() }
 
