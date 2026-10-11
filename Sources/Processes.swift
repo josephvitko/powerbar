@@ -23,6 +23,12 @@ enum Processes {
         return pid_t(info.pbi_ppid)
     }
 
+    /// Path of the outermost `.app` bundle containing the executable, if any.
+    static func appBundlePath(_ pid: pid_t) -> String? {
+        guard let p = path(pid), let r = p.range(of: ".app/") else { return nil }
+        return String(p[..<r.lowerBound]) + ".app"
+    }
+
     /// The outermost `.app` bundle name in the executable path (so Firefox's
     /// `plugin-container` and Chromium's helpers count as the app itself),
     /// falling back to the process name.

@@ -7,16 +7,19 @@ A minimal macOS menu bar app that shows how much power your MacBook is drawing, 
  +45W · 29Wh     ← charging power on AC
 ```
 
-Click it for:
+Click it for a panel (like Control Center) with:
 
-- **Battery** — energy left and full capacity in watt-hours (no percentages), time remaining (Wh ÷ your recent average draw), 1‑min / 5‑min average draw. Wh in the menu bar can be turned off.
-- **Sparkline** — battery draw over the last 10 minutes
-- **USB-C devices** — power the Mac is supplying to a charging phone or other accessory, split out from the Mac's own draw, with time left if you unplugged it
-- **Health** — maximum capacity (matches System Settings), cycle count, temperature
+- **Now** — battery draw in watts, energy left in watt-hours (no percentages), and time left from Wh ÷ your recent average draw. When the Mac is charging a phone or other USB-C device, the draw is split into Mac vs USB-C, with time left if you unplugged it.
+- **History** — a chart of battery draw over the last **10 min** or **24 h**, and a **7-day** bar chart of watt-hours used per day (split into Mac vs USB-C devices). Time on power is shaded; your drain-alert threshold is drawn as a dashed line. One-minute averages are kept for 30 days in `~/Library/Application Support/PowerBar/history.csv`.
 - **Apps** — per-app CPU power (watts) and GPU usage (%), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
-- **Preventing sleep** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
+- **Keeping awake** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
+- **Health** — full-charge capacity vs. new (in Wh), cycle count, temperature
+
+The gear menu has:
+
 - **Low Power Mode** — Never / Only on Battery / Always, same as System Settings (asks for your admin password). The menu bar text turns yellow while it's on.
-- **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It ignores power sent to USB-C devices, fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes. It can be turned off.
+- **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It ignores power sent to USB-C devices, fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes.
+- **Show Wh in Menu Bar**, **Launch at Login**, **Open Activity Monitor**
 
 It runs with no dependencies or root access, and uses ~0% CPU and ~25 MB of RAM.
 

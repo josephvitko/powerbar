@@ -2,10 +2,11 @@ import Foundation
 import IOKit.pwr_mgt
 
 /// An app currently holding a power assertion that stops the Mac or display from sleeping.
-struct SleepBlocker {
+struct SleepBlocker: Identifiable {
     let app: String
     let reason: String
     let blocksDisplay: Bool
+    var id: String { "\(app)|\(reason)|\(blocksDisplay)" }
 
     private static let displayTypes: Set<String> = ["PreventUserIdleDisplaySleep", "NoDisplaySleepAssertion"]
     private static let systemTypes: Set<String> = [
@@ -55,7 +56,7 @@ struct SleepBlocker {
         var seen = Set<String>()
         return result
             .sorted { ($0.blocksDisplay ? 0 : 1, $0.app) < ($1.blocksDisplay ? 0 : 1, $1.app) }
-            .filter { seen.insert("\($0.app)|\($0.reason)|\($0.blocksDisplay)").inserted }
+            .filter { seen.insert($0.id).inserted }
     }
 
     /// Makes assertion names readable: drops UUIDs and names common system ones.

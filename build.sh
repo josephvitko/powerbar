@@ -5,7 +5,7 @@ cd "${0:A:h}"
 
 APP="$HOME/Applications/PowerBar.app"
 rm -rf build && mkdir -p build/PowerBar.app/Contents/MacOS
-swiftc -O -o build/PowerBar.app/Contents/MacOS/PowerBar Sources/*.swift
+swiftc -O -target "$(uname -m)-apple-macos13.0" -o build/PowerBar.app/Contents/MacOS/PowerBar Sources/*.swift
 
 cat > build/PowerBar.app/Contents/Info.plist <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>

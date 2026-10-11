@@ -12,10 +12,12 @@ import IOKit
 ///
 /// Neither covers the display backlight, which is often the largest single draw.
 final class EnergyMonitor {
-    struct AppUsage {
+    struct AppUsage: Identifiable {
         let name: String
+        let bundlePath: String?  // for the app icon
         let cpuWatts: Double?   // nil if unreadable (other users' processes)
         let gpuPercent: Double
+        var id: String { name }
     }
 
     private struct Snapshot {
@@ -26,6 +28,7 @@ final class EnergyMonitor {
 
     private var snapshots: [Snapshot] = []
     private var names: [pid_t: String] = [:]
+    private var bundlePaths: [String: String] = [:]   // app name → .app path
     private let window: TimeInterval
 
     // Rough ranking weight only: treat 10% GPU busy as ~1 W so GPU-heavy apps sort sensibly.
@@ -50,7 +53,11 @@ final class EnergyMonitor {
             }
             guard ok else { continue }
             energy[pid] = info.ri_energy_nj
-            if names[pid] == nil { names[pid] = Processes.appName(pid) }
+            if names[pid] == nil {
+                let name = Processes.appName(pid)
+                names[pid] = name
+                if bundlePaths[name] == nil, let path = Processes.appBundlePath(pid) { bundlePaths[name] = path }
+            }
         }
 
         let gpu = gpuTimes()
@@ -78,7 +85,7 @@ final class EnergyMonitor {
             gpu[name, default: 0] += Double(t - prev) / 1e9 / dt * 100
         }
         return Set(cpu.keys).union(gpu.keys)
-            .map { AppUsage(name: $0, cpuWatts: cpu[$0], gpuPercent: gpu[$0] ?? 0) }
+            .map { AppUsage(name: $0, bundlePath: bundlePaths[$0], cpuWatts: cpu[$0], gpuPercent: gpu[$0] ?? 0) }
             .filter { ($0.cpuWatts ?? 0) >= minimumWatts || $0.gpuPercent >= minimumGPU }
             .sorted { score($0) > score($1) }
             .prefix(n)
