@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = PanelModel()
     private var panel: PanelController!
     private let interval: TimeInterval = 5
+    private var termSource: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         guard let button = item.button else { return }
@@ -16,12 +17,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onBeforeAdminPrompt = { [weak self] in self?.panel.close() }
         model.onTitleChange = { [weak self] in self?.updateTitle() }
 
+        // Save the partial minute of history when quit or killed (e.g. `pkill` from build.sh).
+        signal(SIGTERM, SIG_IGN)
+        termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        termSource?.setEventHandler { NSApp.terminate(nil) }
+        termSource?.resume()
+
         tick()
         Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
         NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) {
             [weak self] _ in self?.updateTitle()
         }
     }
+
+    func applicationWillTerminate(_ note: Notification) { model.history.flush() }
 
     @objc private func togglePanel() { panel.toggle() }
 

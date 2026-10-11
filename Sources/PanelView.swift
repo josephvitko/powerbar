@@ -272,6 +272,7 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 sectionTitle("Apps")
+                Text("last minute").font(.caption2).foregroundStyle(.tertiary)
                 Spacer()
                 Text("CPU").frame(width: 60, alignment: .trailing)
                 Text("GPU").frame(width: 60, alignment: .trailing)

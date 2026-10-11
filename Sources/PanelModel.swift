@@ -58,7 +58,7 @@ final class PanelModel: ObservableObject {
         energy.sample()
         soc.sample()
         blockers = SleepBlocker.current()
-        apps = energy.topApps(5, gpuPower: soc.average(over: 30)?.gpu)
+        apps = energy.topApps(5, gpuPower: soc.average(over: 60)?.gpu)
         reading = BatteryReading.read()
         if let r = reading {
             live.append(r.externalConnected ? nil : max(r.watts, 0))
@@ -120,8 +120,12 @@ final class PanelModel: ObservableObject {
         let step: TimeInterval
         switch range {
         case .live:
-            samples = live.samples
-            step = 5
+            // Live samples only exist since launch; fill the earlier part from saved minutes.
+            let start = Date().addingTimeInterval(-600)
+            let firstLive = live.samples.first?.date ?? Date()
+            let saved = history.minutes(since: start).filter { $0.date.addingTimeInterval(60) <= firstLive }
+            samples = saved.map { ($0.date.addingTimeInterval(30), $0.drawWatts) } + live.samples
+            step = saved.isEmpty ? 5 : 60
         case .day, .week:
             samples = history.minutes(since: Date().addingTimeInterval(-86400)).map { ($0.date, $0.drawWatts) }
             step = 60

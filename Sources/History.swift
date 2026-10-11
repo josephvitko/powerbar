@@ -79,14 +79,24 @@ final class HistoryStore {
 
     // MARK: - Persistence
 
-    private func flush() {
+    /// Writes out the partial current minute (on quit), so it isn't lost.
+    func flush() {
         guard let b = bucket, b.count > 0 else { return }
         bucket = nil
         let n = Double(b.count)
         let m = Minute(date: b.start, batteryWatts: b.battery / n, accessoryWatts: b.accessory / n,
                        onAC: b.acCount * 2 >= b.count, remainingWh: b.wh)
-        minutes.append(m)
+        insert(m)
         append(Self.line(m))
+    }
+
+    /// Appends a minute, merging it with the previous one if it's the same minute
+    /// (the app was restarted partway through it and both halves were saved).
+    private func insert(_ m: Minute) {
+        guard let last = minutes.last, last.date == m.date else { minutes.append(m); return }
+        minutes[minutes.count - 1] = Minute(date: m.date, batteryWatts: (last.batteryWatts + m.batteryWatts) / 2,
+                                            accessoryWatts: (last.accessoryWatts + m.accessoryWatts) / 2,
+                                            onAC: last.onAC && m.onAC, remainingWh: m.remainingWh)
     }
 
     private static func line(_ m: Minute) -> String {
@@ -115,7 +125,9 @@ final class HistoryStore {
                   let wh = Double(f[4]) else { dropped = true; continue }
             let date = Date(timeIntervalSince1970: t)
             guard date >= cutoff else { dropped = true; continue }
-            minutes.append(Minute(date: date, batteryWatts: b, accessoryWatts: a, onAC: f[3] == "1", remainingWh: wh))
+            let before = minutes.count
+            insert(Minute(date: date, batteryWatts: b, accessoryWatts: a, onAC: f[3] == "1", remainingWh: wh))
+            if minutes.count == before { dropped = true }   // merged a duplicate; rewrite the file
         }
         if dropped { try? minutes.map(Self.line).joined().write(to: url, atomically: true, encoding: .utf8) }
     }

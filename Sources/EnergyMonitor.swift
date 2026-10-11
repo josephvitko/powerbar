@@ -27,7 +27,16 @@ final class EnergyMonitor {
         let gpu: [pid_t: UInt64]       // nanoseconds of GPU time
     }
 
+    /// Latest counters per pid, kept after a process exits so its energy still counts
+    /// toward the window it ran in (short-lived builds and scripts would otherwise vanish).
+    private struct LastSeen {
+        var date: Date
+        var energy: UInt64?
+        var gpu: UInt64?
+    }
+
     private var snapshots: [Snapshot] = []
+    private var lastSeen: [pid_t: LastSeen] = [:]
     private var names: [pid_t: String] = [:]
     private var bundlePaths: [String: String] = [:]   // app name → .app path
     private let window: TimeInterval
@@ -35,7 +44,7 @@ final class EnergyMonitor {
     // Fallback ranking weight when GPU power isn't measured: treat 10% GPU busy as ~1 W.
     private let gpuWattsPerPercent = 0.1
 
-    init(window: TimeInterval = 30) { self.window = window }
+    init(window: TimeInterval = 60) { self.window = window }
 
     /// True once there are two snapshots to diff.
     var hasData: Bool { snapshots.count >= 2 }
@@ -66,10 +75,17 @@ final class EnergyMonitor {
             names[pid] = gpuClientNames[pid] ?? Processes.appName(pid)
         }
 
-        names = names.filter { energy[$0.key] != nil || gpu[$0.key] != nil }
+        for (pid, e) in energy { lastSeen[pid, default: LastSeen(date: now)].energy = e; lastSeen[pid]!.date = now }
+        for (pid, t) in gpu { lastSeen[pid, default: LastSeen(date: now)].gpu = t; lastSeen[pid]!.date = now }
+
         snapshots.append(Snapshot(date: now, energy: energy, gpu: gpu))
         // Keep the newest snapshot that is at least `window` old as the baseline.
         while snapshots.count > 2, now.timeIntervalSince(snapshots[1].date) >= window { snapshots.removeFirst() }
+        // Forget processes that exited before the window began.
+        if let baseline = snapshots.first?.date {
+            lastSeen = lastSeen.filter { $0.value.date > baseline }
+            names = names.filter { lastSeen[$0.key] != nil }
+        }
     }
 
     /// Apps with notable CPU power or GPU use over the window, heaviest first. Given the GPU's
@@ -78,13 +94,17 @@ final class EnergyMonitor {
         guard let old = snapshots.first, let new = snapshots.last, new.date > old.date else { return [] }
         let dt = new.date.timeIntervalSince(old.date)
         var cpu: [String: Double] = [:], gpu: [String: Double] = [:]
-        for (pid, e) in new.energy {
-            guard let prev = old.energy[pid], e >= prev, let name = names[pid] else { continue }
-            cpu[name, default: 0] += Double(e - prev) / 1e9 / dt
-        }
-        for (pid, t) in new.gpu {
-            guard let prev = old.gpu[pid], t >= prev, let name = names[pid] else { continue }
-            gpu[name, default: 0] += Double(t - prev) / 1e9 / dt * 100
+        for (pid, seen) in lastSeen {
+            guard let name = names[pid] else { continue }
+            // Counters start at zero, so a process born mid-window counts from 0.
+            if let e = seen.energy {
+                let start = old.energy[pid] ?? 0
+                if e >= start { cpu[name, default: 0] += Double(e - start) / 1e9 / dt }
+            }
+            if let t = seen.gpu {
+                let start = old.gpu[pid] ?? 0
+                if t >= start { gpu[name, default: 0] += Double(t - start) / 1e9 / dt * 100 }
+            }
         }
         let gpuBusy = gpu.values.reduce(0, +)
         return Set(cpu.keys).union(gpu.keys)
