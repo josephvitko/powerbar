@@ -7,7 +7,8 @@
 # Notarization credentials, either:
 #   NOTARY_PROFILE  a keychain profile from `xcrun notarytool store-credentials` (local), or
 #   APPLE_ID, APPLE_APP_PASSWORD (app-specific password), APPLE_TEAM_ID  (CI)
-# --publish creates the GitHub release v<version> with the zip attached (needs `gh`).
+# --publish creates the GitHub release v<version> with the zip attached and bumps the cask in
+# josephvitko/homebrew-tap (needs `gh`, authenticated with push access to both repos).
 set -euo pipefail
 cd "${0:A:h}/.."
 
@@ -51,4 +52,12 @@ echo "    sha256 $SHA"
 
 if [[ "$PUBLISH" == "--publish" ]]; then
   gh release create "v$VERSION" "$ZIP" --title "PowerBar $VERSION" --generate-notes
+
+  echo "==> Bumping Homebrew cask"
+  TAP="$(mktemp -d)/homebrew-tap"
+  gh repo clone josephvitko/homebrew-tap "$TAP" -- --quiet
+  sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$TAP/Casks/powerbar.rb"
+  git -C "$TAP" commit -qam "powerbar $VERSION"
+  git -C "$TAP" push -q
+  rm -rf "${TAP:h}"
 fi
