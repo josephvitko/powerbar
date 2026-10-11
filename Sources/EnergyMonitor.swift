@@ -1,15 +1,40 @@
 import Darwin
 import Foundation
+import IOKit
 
-/// Per-app power, from the kernel's per-process energy counters (`ri_energy_nj`,
-/// the same source Activity Monitor uses). Only processes owned by the current
-/// user are readable without root, so system daemons like WindowServer are absent.
+/// Per-app CPU power and GPU usage.
+///
+/// - CPU watts come from the kernel's per-process energy counters (`ri_energy_nj`,
+///   the same source Activity Monitor uses). Only the current user's processes are
+///   readable without root, so system daemons like WindowServer have no CPU figure.
+/// - GPU % comes from each GPU client's `accumulatedGPUTime` in the IORegistry, which
+///   includes system processes. macOS doesn't expose per-app GPU *power*.
+///
+/// Neither covers the display backlight, which is often the largest single draw.
 final class EnergyMonitor {
-    private var snapshots: [(date: Date, energy: [pid_t: UInt64])] = []
+    struct AppUsage {
+        let name: String
+        let cpuWatts: Double?   // nil if unreadable (other users' processes)
+        let gpuPercent: Double
+    }
+
+    private struct Snapshot {
+        let date: Date
+        let energy: [pid_t: UInt64]    // nanojoules
+        let gpu: [pid_t: UInt64]       // nanoseconds of GPU time
+    }
+
+    private var snapshots: [Snapshot] = []
     private var names: [pid_t: String] = [:]
     private let window: TimeInterval
 
+    // Rough ranking weight only: treat 10% GPU busy as ~1 W so GPU-heavy apps sort sensibly.
+    private let gpuWattsPerPercent = 0.1
+
     init(window: TimeInterval = 30) { self.window = window }
+
+    /// True once there are two snapshots to diff.
+    var hasData: Bool { snapshots.count >= 2 }
 
     func sample() {
         let now = Date()
@@ -27,27 +52,73 @@ final class EnergyMonitor {
             energy[pid] = info.ri_energy_nj
             if names[pid] == nil { names[pid] = Processes.appName(pid) }
         }
-        names = names.filter { energy[$0.key] != nil }
-        snapshots.append((now, energy))
+
+        let gpu = gpuTimes()
+        for pid in gpu.keys where names[pid] == nil || names[pid]!.hasPrefix("pid ") {
+            names[pid] = gpuClientNames[pid] ?? Processes.appName(pid)
+        }
+
+        names = names.filter { energy[$0.key] != nil || gpu[$0.key] != nil }
+        snapshots.append(Snapshot(date: now, energy: energy, gpu: gpu))
         // Keep the newest snapshot that is at least `window` old as the baseline.
         while snapshots.count > 2, now.timeIntervalSince(snapshots[1].date) >= window { snapshots.removeFirst() }
     }
 
-    /// True once there are two snapshots to diff.
-    var hasData: Bool { snapshots.count >= 2 }
-
-    /// Average watts per app over the window, highest first.
-    func topApps(_ n: Int, minimumWatts: Double = 0.05) -> [(name: String, watts: Double)] {
+    /// Apps with notable CPU power or GPU use over the window, heaviest first.
+    func topApps(_ n: Int, minimumWatts: Double = 0.05, minimumGPU: Double = 1) -> [AppUsage] {
         guard let old = snapshots.first, let new = snapshots.last, new.date > old.date else { return [] }
         let dt = new.date.timeIntervalSince(old.date)
-        var byApp: [String: Double] = [:]
+        var cpu: [String: Double] = [:], gpu: [String: Double] = [:]
         for (pid, e) in new.energy {
             guard let prev = old.energy[pid], e >= prev, let name = names[pid] else { continue }
-            byApp[name, default: 0] += Double(e - prev) / 1e9 / dt
+            cpu[name, default: 0] += Double(e - prev) / 1e9 / dt
         }
-        return byApp.filter { $0.value >= minimumWatts }
-            .sorted { $0.value > $1.value }
+        for (pid, t) in new.gpu {
+            guard let prev = old.gpu[pid], t >= prev, let name = names[pid] else { continue }
+            gpu[name, default: 0] += Double(t - prev) / 1e9 / dt * 100
+        }
+        return Set(cpu.keys).union(gpu.keys)
+            .map { AppUsage(name: $0, cpuWatts: cpu[$0], gpuPercent: gpu[$0] ?? 0) }
+            .filter { ($0.cpuWatts ?? 0) >= minimumWatts || $0.gpuPercent >= minimumGPU }
+            .sorted { score($0) > score($1) }
             .prefix(n)
-            .map { ($0.key, $0.value) }
+            .map { $0 }
+    }
+
+    private func score(_ u: AppUsage) -> Double { (u.cpuWatts ?? 0) + u.gpuPercent * gpuWattsPerPercent }
+
+    // MARK: - GPU
+
+    private var gpuClientNames: [pid_t: String] = [:]
+
+    /// Sums `accumulatedGPUTime` across every GPU user client, keyed by owning pid.
+    private func gpuTimes() -> [pid_t: UInt64] {
+        var out: [pid_t: UInt64] = [:]
+        var accels: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &accels) == KERN_SUCCESS
+        else { return out }
+        defer { IOObjectRelease(accels) }
+
+        while case let accel = IOIteratorNext(accels), accel != 0 {
+            defer { IOObjectRelease(accel) }
+            var clients: io_iterator_t = 0
+            guard IORegistryEntryGetChildIterator(accel, kIOServicePlane, &clients) == KERN_SUCCESS else { continue }
+            defer { IOObjectRelease(clients) }
+            while case let client = IOIteratorNext(clients), client != 0 {
+                defer { IOObjectRelease(client) }
+                func prop(_ key: String) -> Any? {
+                    IORegistryEntryCreateCFProperty(client, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+                }
+                // e.g. "pid 395, WindowServer"
+                guard let creator = prop("IOUserClientCreator") as? String,
+                      let usage = prop("AppUsage") as? [[String: Any]] else { continue }
+                let parts = creator.dropFirst(4).split(separator: ",", maxSplits: 1)
+                guard creator.hasPrefix("pid "), let pid = pid_t(parts.first ?? "") else { continue }
+                if parts.count == 2 { gpuClientNames[pid] = parts[1].trimmingCharacters(in: .whitespaces) }
+                out[pid, default: 0] += usage.compactMap { ($0["accumulatedGPUTime"] as? NSNumber)?.uint64Value }.reduce(0, +)
+            }
+        }
+        gpuClientNames = gpuClientNames.filter { out[$0.key] != nil }
+        return out
     }
 }

@@ -67,16 +67,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(label(String(format: "Health %d%% · %d cycles · %.0f°C", r.healthPercent, r.cycles, r.tempC)))
 
         menu.addItem(.separator())
-        menu.addItem(label("Energy by app", color: .secondaryLabelColor))
         let apps = energy.topApps(5)
         if apps.isEmpty {
-            menu.addItem(label(energy.hasData ? "All apps idle" : "Measuring…", color: .secondaryLabelColor))
+            menu.addItem(label("Apps", color: .secondaryLabelColor))
+            menu.addItem(label(energy.hasData ? "No app using notable CPU or GPU" : "Measuring…",
+                               color: .secondaryLabelColor))
+        } else {
+            menu.addItem(label("Apps\tCPU\tGPU", color: .secondaryLabelColor, tabs: appColumns))
         }
         for app in apps {
-            // Pad with figure spaces (digit-width) so the values right-align.
-            let w = String(format: "%.1fW", app.watts)
-            let pad = String(repeating: "\u{2007}", count: max(0, 5 - w.count))
-            menu.addItem(label("\(pad)\(w)  \(app.name)"))
+            let cpu = app.cpuWatts.map { String(format: "%.2fW", $0) } ?? "–"
+            let gpu = app.gpuPercent >= 0.5 ? String(format: "%.0f%%", app.gpuPercent) : "–"
+            let name = app.name.count > 24 ? app.name.prefix(23) + "…" : app.name  // keep clear of the columns
+            menu.addItem(label("\(name)\t\(cpu)\t\(gpu)", tabs: appColumns))
         }
 
         if !blockers.isEmpty {
@@ -144,12 +147,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return parent
     }
 
+    // App name, then right-aligned CPU and GPU columns.
+    private let appColumns = [NSTextTab(textAlignment: .right, location: 230),
+                              NSTextTab(textAlignment: .right, location: 280)]
+
     // Info rows are drawn as custom views: action-less menu items always render dimmed,
     // and a view also avoids the hover highlight.
-    private func label(_ s: String, color: NSColor = .labelColor) -> NSMenuItem {
-        let field = NSTextField(labelWithString: s)
-        field.font = menuFont
-        field.textColor = color
+    private func label(_ s: String, color: NSColor = .labelColor, tabs: [NSTextTab] = []) -> NSMenuItem {
+        let style = NSMutableParagraphStyle()
+        style.tabStops = tabs
+        style.lineBreakMode = .byTruncatingTail
+        let field = NSTextField(labelWithAttributedString: NSAttributedString(string: s, attributes: [
+            .font: menuFont, .foregroundColor: color, .paragraphStyle: style]))
         field.sizeToFit()
         let height: CGFloat = 22
         let view = NSView(frame: NSRect(x: 0, y: 0, width: field.frame.width + leading + 14, height: height))
