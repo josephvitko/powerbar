@@ -9,12 +9,13 @@ A minimal macOS menu bar app that shows how much power your MacBook is drawing, 
 
 Click it for:
 
-- **Battery** — energy left and full capacity in watt-hours (no percentages), time remaining, 1‑min / 5‑min average draw. Wh in the menu bar can be turned off.
+- **Battery** — energy left and full capacity in watt-hours (no percentages), time remaining (Wh ÷ your recent average draw), 1‑min / 5‑min average draw. Wh in the menu bar can be turned off.
 - **Sparkline** — battery draw over the last 10 minutes
-- **USB-C devices** — power the Mac is supplying to a charging phone or other accessory, split out from the Mac's own draw
+- **USB-C devices** — power the Mac is supplying to a charging phone or other accessory, split out from the Mac's own draw, with time left if you unplugged it
 - **Health** — maximum capacity (matches System Settings), cycle count, temperature
 - **Apps** — per-app CPU power (watts) and GPU usage (%), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
 - **Preventing sleep** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
+- **Low Power Mode** — Never / Only on Battery / Always, same as System Settings (asks for your admin password). The menu bar text turns yellow while it's on.
 - **Drain alerts** — an optional notification when draw stays above a threshold (10–30 W, sustained for 2/5/10 min). It ignores power sent to USB-C devices, fires once per episode, re-arms only after draw drops, and never more than once every 30 minutes. It can be turned off.
 
 It runs with no dependencies or root access, and uses ~0% CPU and ~25 MB of RAM.

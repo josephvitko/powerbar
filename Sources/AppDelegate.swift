@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         tick()
         Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
+        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) {
+            [weak self] _ in self?.tick()
+        }
     }
 
     private func tick() {
@@ -48,8 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setTitle(_ text: String, symbol: String?) {
         guard let b = item.button else { return }
-        b.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        b.title = text
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        // Yellow while Low Power Mode is on, like the system battery icon.
+        if LowPowerMode.isActive {
+            b.attributedTitle = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.systemYellow])
+        } else {
+            b.font = font
+            b.title = text
+        }
         b.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
         b.imagePosition = .imageLeading
     }
@@ -60,7 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let r = BatteryReading.read() else { menu.addItem(label("Battery unavailable")); return }
 
         var status = String(format: "Battery %.1f / %.1f Wh", r.remainingWh, r.fullWh)
-        if let m = r.minutesLeft { status += String(format: " · %d:%02d left", m / 60, m % 60) }
+        // Time left from our own Wh ÷ recent average draw; fall back to macOS's estimate.
+        let avgTotal = history.average(over: 300) ?? history.average(over: 60)
+        if let m = minutesLeft(r.remainingWh, avgTotal) ?? r.minutesLeft { status += " · \(hm(m)) left" }
         else if r.externalConnected { status += r.isCharging ? " · charging" : " · on AC" }
         if let a = r.adapterWatts, r.externalConnected { status += " · \(a)W adapter" }
         menu.addItem(label(status))
@@ -68,6 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if r.accessoryWatts >= 0.5 {
             let mac = r.externalConnected ? "" : String(format: "Mac %.1fW · ", max(r.watts - r.accessoryWatts, 0))
             menu.addItem(label(mac + String(format: "USB-C devices %.1fW", r.accessoryWatts)))
+            if !r.externalConnected,
+               let m = minutesLeft(r.remainingWh, macHistory.average(over: 300) ?? macHistory.average(over: 60)) {
+                menu.addItem(label("\(hm(m)) left without USB-C devices", color: .secondaryLabelColor))
+            }
         }
         if !r.externalConnected {
             let a1 = history.average(over: 60).map { String(format: "%.1fW", $0) } ?? "–"
@@ -104,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        menu.addItem(lowPowerMenu())
         menu.addItem(alertsMenu())
         let wh = NSMenuItem(title: "Show Wh in Menu Bar", action: #selector(toggleWh), keyEquivalent: "")
         wh.target = self
@@ -134,6 +150,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let peak = values.compactMap { $0 }.max() ?? 0
         let minutes = Int((history.samples.last!.date.timeIntervalSince(history.samples.first!.date) / 60).rounded())
         menu.addItem(label(String(format: "Last %d min · peak %.1fW", max(minutes, 1), peak), color: .secondaryLabelColor))
+    }
+
+    private func minutesLeft(_ wh: Double, _ watts: Double?) -> Int? {
+        guard let w = watts, w > 0.5 else { return nil }
+        return Int(wh / w * 60)
+    }
+
+    private func hm(_ minutes: Int) -> String { String(format: "%d:%02d", minutes / 60, minutes % 60) }
+
+    private func lowPowerMenu() -> NSMenuItem {
+        let current = LowPowerMode.current()
+        let sub = NSMenu()
+        for mode in LowPowerMode.allCases {
+            let i = NSMenuItem(title: mode.title, action: #selector(setLowPowerMode(_:)), keyEquivalent: "")
+            i.representedObject = mode
+            i.target = self
+            i.state = mode == current ? .on : .off
+            sub.addItem(i)
+        }
+        let parent = NSMenuItem(title: "Low Power Mode: \(current?.title ?? "Custom")"
+                                + (LowPowerMode.isActive ? " (on)" : ""), action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        return parent
+    }
+
+    @objc private func setLowPowerMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? LowPowerMode else { return }
+        // Let the menu finish closing before the password prompt appears.
+        DispatchQueue.main.async { mode.apply() }
     }
 
     private func alertsMenu() -> NSMenuItem {

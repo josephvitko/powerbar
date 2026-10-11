@@ -45,7 +45,7 @@ struct SleepBlocker {
                 } else if ownerName == "caffeinate" {
                     reason = "preventing idle sleep"
                 } else {
-                    reason = (a["AssertName"] as? String).map { "“\($0)”" } ?? type
+                    reason = describe(a["AssertName"] as? String) ?? type
                 }
                 let app = onBehalf.map { label(for: $0) } ?? label(for: owner, fallback: ownerName)
                 result.append(SleepBlocker(app: app, reason: reason, blocksDisplay: display))
@@ -56,6 +56,16 @@ struct SleepBlocker {
         return result
             .sorted { ($0.blocksDisplay ? 0 : 1, $0.app) < ($1.blocksDisplay ? 0 : 1, $1.app) }
             .filter { seen.insert("\($0.app)|\($0.reason)|\($0.blocksDisplay)").inserted }
+    }
+
+    /// Makes assertion names readable: drops UUIDs and names common system ones.
+    private static func describe(_ name: String?) -> String? {
+        guard let name else { return nil }
+        let cleaned = name.replacingOccurrences(
+            of: "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+            with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        if cleaned.hasPrefix("NSURLSessionTask") { return "background network transfer" }
+        return cleaned.isEmpty ? nil : "“\(cleaned)”"
     }
 
     /// App name, attributing command-line tools like `caffeinate` to whatever launched them.
