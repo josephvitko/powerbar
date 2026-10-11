@@ -14,6 +14,14 @@ struct ChartPoint: Identifiable {
     var id: Date { date }
 }
 
+/// One part of the Mac's power use, for the breakdown bar.
+struct PowerSlice: Identifiable {
+    enum Kind: String { case cpu = "CPU", gpu = "GPU", memory = "Memory", otherChip = "Other chip", rest = "Display & rest", usb = "USB-C devices" }
+    let kind: Kind
+    let watts: Double
+    var id: Kind { kind }
+}
+
 struct ChartBand: Identifiable {   // a stretch of time on AC power
     let start: Date
     let end: Date
@@ -27,11 +35,13 @@ final class PanelModel: ObservableObject {
     private(set) var apps: [EnergyMonitor.AppUsage] = []
     private(set) var blockers: [SleepBlocker] = []
     private(set) var live = PowerHistory(span: 10 * 60)        // total battery draw, 5 s samples
-    private var macLive = PowerHistory(span: 10 * 60)          // excluding power sent to USB-C devices
+    private var macLive = PowerHistory(span: 10 * 60)          // excluding power sent to USB-C devices; nil on AC
+    private var systemLive = PowerHistory(span: 2 * 60)        // the Mac's own power, on battery or AC
     private(set) var lowPower: LowPowerMode?
     let history = HistoryStore()
     let alerts = DrainAlerts()
     private let energy = EnergyMonitor()
+    private let soc = SoCPower()
 
     @Published var range: ChartRange = .live
 
@@ -46,12 +56,14 @@ final class PanelModel: ObservableObject {
 
     func tick() {
         energy.sample()
+        soc.sample()
         blockers = SleepBlocker.current()
-        apps = energy.topApps(5)
+        apps = energy.topApps(5, gpuPower: soc.average(over: 30)?.gpu)
         reading = BatteryReading.read()
         if let r = reading {
             live.append(r.externalConnected ? nil : max(r.watts, 0))
-            macLive.append(r.externalConnected ? nil : max(r.watts - r.accessoryWatts, 0))
+            macLive.append(r.externalConnected ? nil : r.macWatts)
+            systemLive.append(r.macWatts)
             history.record(r)
         }
         // Alert on the Mac's own draw, so charging a phone doesn't trigger it.
@@ -78,6 +90,22 @@ final class PanelModel: ObservableObject {
     private static func minutes(_ wh: Double, _ watts: Double?) -> Int? {
         guard let w = watts, w > 0.5 else { return nil }
         return Int(wh / w * 60)
+    }
+
+    /// Where the Mac's power is going over the last minute: chip parts from IOReport, and
+    /// the remainder of SMC system power (display backlight, SSD, Wi-Fi, power conversion…).
+    var breakdown: [PowerSlice]? {
+        guard let r = reading, let chip = soc.average(over: 60),
+              let mac = systemLive.average(over: 60) ?? r.macWatts else { return nil }
+        var slices: [PowerSlice] = [
+            .init(kind: .cpu, watts: chip.cpu),
+            .init(kind: .gpu, watts: chip.gpu),
+            .init(kind: .memory, watts: chip.memory),
+            .init(kind: .otherChip, watts: chip.otherChip),
+            .init(kind: .rest, watts: max(mac - chip.total, 0)),
+        ]
+        if r.accessoryWatts >= 0.5 { slices.append(.init(kind: .usb, watts: r.accessoryWatts)) }
+        return slices.filter { $0.watts >= 0.05 }
     }
 
     // MARK: - Chart data

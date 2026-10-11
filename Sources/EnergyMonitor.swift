@@ -17,6 +17,7 @@ final class EnergyMonitor {
         let bundlePath: String?  // for the app icon
         let cpuWatts: Double?   // nil if unreadable (other users' processes)
         let gpuPercent: Double
+        let gpuWatts: Double?   // the app's share of measured GPU power, when available
         var id: String { name }
     }
 
@@ -31,7 +32,7 @@ final class EnergyMonitor {
     private var bundlePaths: [String: String] = [:]   // app name → .app path
     private let window: TimeInterval
 
-    // Rough ranking weight only: treat 10% GPU busy as ~1 W so GPU-heavy apps sort sensibly.
+    // Fallback ranking weight when GPU power isn't measured: treat 10% GPU busy as ~1 W.
     private let gpuWattsPerPercent = 0.1
 
     init(window: TimeInterval = 30) { self.window = window }
@@ -71,8 +72,9 @@ final class EnergyMonitor {
         while snapshots.count > 2, now.timeIntervalSince(snapshots[1].date) >= window { snapshots.removeFirst() }
     }
 
-    /// Apps with notable CPU power or GPU use over the window, heaviest first.
-    func topApps(_ n: Int, minimumWatts: Double = 0.05, minimumGPU: Double = 1) -> [AppUsage] {
+    /// Apps with notable CPU power or GPU use over the window, heaviest first. Given the GPU's
+    /// measured power, each app is assigned a share of it in proportion to its GPU busy time.
+    func topApps(_ n: Int, gpuPower: Double? = nil, minimumWatts: Double = 0.05, minimumGPU: Double = 1) -> [AppUsage] {
         guard let old = snapshots.first, let new = snapshots.last, new.date > old.date else { return [] }
         let dt = new.date.timeIntervalSince(old.date)
         var cpu: [String: Double] = [:], gpu: [String: Double] = [:]
@@ -84,15 +86,20 @@ final class EnergyMonitor {
             guard let prev = old.gpu[pid], t >= prev, let name = names[pid] else { continue }
             gpu[name, default: 0] += Double(t - prev) / 1e9 / dt * 100
         }
+        let gpuBusy = gpu.values.reduce(0, +)
         return Set(cpu.keys).union(gpu.keys)
-            .map { AppUsage(name: $0, bundlePath: bundlePaths[$0], cpuWatts: cpu[$0], gpuPercent: gpu[$0] ?? 0) }
-            .filter { ($0.cpuWatts ?? 0) >= minimumWatts || $0.gpuPercent >= minimumGPU }
+            .map { name -> AppUsage in
+                let pct = gpu[name] ?? 0
+                let watts = gpuPower.flatMap { gpuBusy > 0 ? $0 * pct / gpuBusy : nil }
+                return AppUsage(name: name, bundlePath: bundlePaths[name], cpuWatts: cpu[name], gpuPercent: pct, gpuWatts: watts)
+            }
+            .filter { ($0.cpuWatts ?? 0) >= minimumWatts || ($0.gpuWatts.map { $0 >= minimumWatts } ?? ($0.gpuPercent >= minimumGPU)) }
             .sorted { score($0) > score($1) }
             .prefix(n)
             .map { $0 }
     }
 
-    private func score(_ u: AppUsage) -> Double { (u.cpuWatts ?? 0) + u.gpuPercent * gpuWattsPerPercent }
+    private func score(_ u: AppUsage) -> Double { (u.cpuWatts ?? 0) + (u.gpuWatts ?? u.gpuPercent * gpuWattsPerPercent) }
 
     // MARK: - GPU
 

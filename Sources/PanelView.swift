@@ -10,6 +10,10 @@ struct PanelView: View {
             if let r = model.reading {
                 header(r)
                 chartSection
+                if let slices = model.breakdown, !slices.isEmpty {
+                    Divider()
+                    breakdownSection(slices)
+                }
                 Divider()
                 appsSection
                 if !model.blockers.isEmpty {
@@ -70,12 +74,13 @@ struct PanelView: View {
     private func powerSubtitle(_ r: BatteryReading) -> String {
         if r.externalConnected {
             var parts = [r.isCharging ? "Charging" : "Not charging"]
+            if let mac = r.macWatts { parts.append(String(format: "Mac %.1f W", mac)) }
             if let a = r.adapterWatts { parts.append("\(a) W adapter") }
             if r.accessoryWatts >= 0.5 { parts.append(String(format: "USB-C %.1f W", r.accessoryWatts)) }
             return parts.joined(separator: " · ")
         }
         if r.accessoryWatts >= 0.5 {
-            return String(format: "Mac %.1f W · USB-C %.1f W", max(r.watts - r.accessoryWatts, 0), r.accessoryWatts)
+            return String(format: "Mac %.1f W · USB-C %.1f W", r.macWatts ?? 0, r.accessoryWatts)
         }
         return "Drawing from battery"
     }
@@ -163,11 +168,13 @@ struct PanelView: View {
             ForEach(days) { d in
                 BarMark(x: .value("Day", d.date, unit: .day), y: .value("Wh", d.macWh))
                     .foregroundStyle(by: .value("Use", "Mac"))
+                    .cornerRadius(2)
                 BarMark(x: .value("Day", d.date, unit: .day), y: .value("Wh", d.accessoryWh))
                     .foregroundStyle(by: .value("Use", "USB-C devices"))
+                    .cornerRadius(2)
             }
         }
-        .chartForegroundStyleScale(["Mac": Color.accentColor, "USB-C devices": Color.orange.opacity(0.8)])
+        .chartForegroundStyleScale(["Mac": Color.accentColor, "USB-C devices": Palette.color(.usb)])
         .chartLegend(days.contains { $0.accessoryWh > 0.05 } ? .visible : .hidden)
         .chartXAxis {
             AxisMarks(values: .stride(by: .day)) { _ in
@@ -219,6 +226,46 @@ struct PanelView: View {
         }
     }
 
+    // MARK: Breakdown
+
+    private func breakdownSection(_ slices: [PowerSlice]) -> some View {
+        let total = slices.map(\.watts).reduce(0, +)
+        let gap: CGFloat = 2
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                sectionTitle("Where it's going")
+                Spacer()
+                Text("last minute").font(.caption2).foregroundStyle(.tertiary)
+            }
+            // Part-to-whole bar with a 2 pt surface gap between segments.
+            GeometryReader { geo in
+                let available = geo.size.width - gap * CGFloat(slices.count - 1)
+                HStack(spacing: gap) {
+                    ForEach(slices) { slice in
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(Palette.color(slice.kind))
+                            .frame(width: max(available * slice.watts / total, 1))
+                    }
+                }
+            }
+            .frame(height: 10)
+            // Legend doubles as the labels: every segment's value is written out.
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 18, alignment: .leading),
+                                GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 5) {
+                ForEach(slices) { slice in
+                    HStack(spacing: 6) {
+                        Circle().fill(Palette.color(slice.kind)).frame(width: 7, height: 7)
+                        Text(slice.kind.rawValue).foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        Text(String(format: "%.1f W", slice.watts)).monospacedDigit()
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .help("Chip power from IOReport; “Display & rest” is the rest of the Mac's total from the SMC — backlight, SSD, Wi-Fi, and power conversion.")
+    }
+
     // MARK: Apps
 
     private var appsSection: some View {
@@ -227,7 +274,7 @@ struct PanelView: View {
                 sectionTitle("Apps")
                 Spacer()
                 Text("CPU").frame(width: 60, alignment: .trailing)
-                Text("GPU").frame(width: 44, alignment: .trailing)
+                Text("GPU").frame(width: 60, alignment: .trailing)
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -242,13 +289,17 @@ struct PanelView: View {
                     Spacer(minLength: 8)
                     Text(app.cpuWatts.flatMap { $0 >= 0.005 ? String(format: "%.2f W", $0) : nil } ?? "–")
                         .frame(width: 60, alignment: .trailing)
-                    Text(app.gpuPercent >= 0.5 ? String(format: "%.0f%%", app.gpuPercent) : "–")
-                        .frame(width: 44, alignment: .trailing)
+                    Text(gpuText(app)).frame(width: 60, alignment: .trailing)
                 }
                 .font(.callout)
                 .monospacedDigit()
             }
         }
+    }
+
+    private func gpuText(_ app: EnergyMonitor.AppUsage) -> String {
+        if let w = app.gpuWatts { return w >= 0.005 ? String(format: "%.2f W", w) : "–" }
+        return app.gpuPercent >= 0.5 ? String(format: "%.0f%%", app.gpuPercent) : "–"
     }
 
     @ViewBuilder private func appIcon(_ app: EnergyMonitor.AppUsage) -> some View {
@@ -341,6 +392,31 @@ struct PanelView: View {
     private func duration(_ seconds: Double) -> String {
         let m = Int(seconds / 60)
         return m < 60 ? "\(m) min" : String(format: "%.1f h", Double(m) / 60)
+    }
+}
+
+/// Categorical colors for the breakdown, in fixed slot order (validated for colorblind
+/// separation in light and dark). "Display & rest" is the remainder, so it's neutral gray.
+enum Palette {
+    static func color(_ kind: PowerSlice.Kind) -> Color {
+        switch kind {
+        case .cpu: dynamic(light: 0x2A78D6, dark: 0x3987E5)
+        case .gpu: dynamic(light: 0xEB6834, dark: 0xD95926)
+        case .memory: dynamic(light: 0x1BAF7A, dark: 0x199E70)
+        case .otherChip: dynamic(light: 0xEDA100, dark: 0xC98500)
+        case .usb: dynamic(light: 0xE87BA4, dark: 0xD55181)
+        case .rest: dynamic(light: 0x9A9993, dark: 0x6B6A66)
+        }
+    }
+
+    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        func ns(_ hex: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? ns(dark) : ns(light)
+        })
     }
 }
 

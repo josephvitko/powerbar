@@ -5,6 +5,7 @@ import IOKit
 struct BatteryReading {
     let watts: Double          // >0 discharging, <0 charging
     let accessoryWatts: Double // power the Mac is supplying to USB-C devices (e.g. charging a phone)
+    let systemWatts: Double?   // whole-system power from the SMC (includes USB-C devices); works on AC too
     let percent: Int
     let remainingWh: Double    // charge left, from the gauge's raw mAh × pack voltage
     let fullWh: Double         // full-charge capacity today
@@ -16,6 +17,12 @@ struct BatteryReading {
     let healthPercent: Int
     let cycles: Int
     let tempC: Double
+
+    /// Power used by the Mac itself (excluding USB-C devices), on battery or AC.
+    var macWatts: Double? {
+        let total = systemWatts ?? (externalConnected ? nil : watts)
+        return total.map { max($0 - accessoryWatts, 0) }
+    }
 
     static func read() -> BatteryReading? {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
@@ -36,10 +43,15 @@ struct BatteryReading {
         let portsOut = (p["PowerOutDetails"] as? [[String: Any]]) ?? []
         let accessoryMilliwatts = portsOut.compactMap { ($0["Watts"] as? NSNumber)?.doubleValue }.reduce(0, +)
 
+        // The SMC's battery power updates every few seconds; the gauge's current only about once a minute.
+        let smcBattery = external ? nil : SMC.shared.float("PPBR").map(Double.init).flatMap { $0 > 0 ? $0 : nil }
+        let system = SMC.shared.float("PSTR").map(Double.init).flatMap { $0 > 0 ? $0 : nil }
+
         return BatteryReading(
-            watts: -amps * volts,
+            watts: smcBattery ?? -amps * volts,
             // Ports report ~0.1 W with nothing attached; treat that as zero.
             accessoryWatts: accessoryMilliwatts >= 500 ? accessoryMilliwatts / 1000 : 0,
+            systemWatts: system,
             percent: int("CurrentCapacity"),
             // Uses the present pack voltage, so it reads a few % high near full and low near empty.
             remainingWh: Double(int("AppleRawCurrentCapacity")) * volts / 1000,

@@ -11,7 +11,8 @@ Click it for a panel (like Control Center) with:
 
 - **Now** — battery draw in watts, energy left in watt-hours (no percentages), and time left from Wh ÷ your recent average draw. When the Mac is charging a phone or other USB-C device, the draw is split into Mac vs USB-C, with time left if you unplugged it.
 - **History** — a chart of battery draw over the last **10 min** or **24 h**, and a **7-day** bar chart of watt-hours used per day (split into Mac vs USB-C devices). Time on power is shaded; your drain-alert threshold is drawn as a dashed line. One-minute averages are kept for 30 days in `~/Library/Application Support/PowerBar/history.csv`.
-- **Apps** — per-app CPU power (watts) and GPU usage (%), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
+- **Where it's going** — the Mac's power split into CPU, GPU, memory, other chip parts (Neural Engine, media engines, display engine), **display & rest** (backlight, SSD, Wi‑Fi, power conversion — whatever's left of the system total), and USB‑C devices
+- **Apps** — per-app CPU power and GPU power in watts (each app's share of measured GPU power, by GPU busy time), with helper processes grouped under their app (e.g. all of Firefox's tab processes count as "Firefox")
 - **Keeping awake** — apps holding sleep assertions, such as a browser tab's video wake lock, `caffeinate`, or an app holding the audio output open
 - **Health** — full-charge capacity vs. new (in Wh), cycle count, temperature
 
@@ -39,19 +40,20 @@ cd powerbar
 
 | Reading | Source |
 | --- | --- |
-| Battery watts | `InstantAmperage × Voltage` from the `AppleSmartBattery` IOKit service |
+| Battery watts | SMC key `PPBR` (updates every few seconds), falling back to `InstantAmperage × Voltage` from `AppleSmartBattery` |
+| System watts | SMC key `PSTR` — whole-system power, on battery or AC |
+| Chip breakdown | IOReport "Energy Model" channels (`CPU Energy`, `GPU Energy`, `DRAM`/`AMCC`/`DCS`, `ANE`, …) via the private `libIOReport`, the same counters `powermetrics` uses |
 | Per-app CPU watts | Δ`ri_energy_nj` from `proc_pid_rusage` (the counters Activity Monitor uses), over a 30 s window |
-| Per-app GPU % | Δ`accumulatedGPUTime` of each `IOAccelerator` user client in the IORegistry |
+| Per-app GPU | Δ`accumulatedGPUTime` of each `IOAccelerator` user client, used to split measured GPU power between apps |
 | Watt-hours | `AppleRawCurrentCapacity` / `NominalChargeCapacity` (mAh) × present pack voltage |
 | USB-C devices | `PowerOutDetails` (per-port milliwatts) on `AppleSmartBattery` |
 | Sleep blockers | `IOPMCopyAssertionsByProcess`, attributing audio assertions to the app actually playing |
 
 Caveats:
 
-- The battery gauge refreshes its current reading roughly once a minute, so the menu bar number moves in steps. The averages are the better guide.
 - Watt-hours use the present pack voltage, so they read a few % high near full and a few % low near empty. They can differ from macOS's percentage, which is smoothed.
-- On AC power it shows charging power, not total system power (that would need `powermetrics` and root).
-- The per-app list won't add up to the battery number. It excludes the display backlight (often the biggest draw), macOS doesn't expose per-app GPU *power* (only GPU busy time), and CPU energy for system daemons like WindowServer isn't readable without root. Their GPU use does show up.
+- IOReport is a private framework. If a future macOS changes it, the breakdown disappears and everything else keeps working.
+- The per-app list won't add up to the total: most of an idle Mac's power is the display and the rest of the system, which no app "owns" — the breakdown bar shows that part. CPU energy for system daemons like WindowServer isn't readable without root; their GPU use does show up.
 
 ## License
 
